@@ -55,6 +55,10 @@ const timers = {}; // Almacenamiento de temporizadores por usuario
 const pagosPendientes = {}; // Almacena pagos pendientes de confirmación: { [clientNumber]: { nombre, phone_id, resumen } }
 const rechazosPendientes = {}; // Almacena rechazos esperando motivo: { [adminNumber]: clientNumber }
 
+// 🔄 DEDUPLICACIÓN: Caché de mensajes procesados (evita respuestas duplicadas)
+const mensajesProcesados = new Set();
+const TIEMPO_CACHE_MENSAJES = 5 * 60 * 1000; // 5 minutos
+
 // 2. EL MENÚ (Cerebro del Faraón)
 const DATOS_DEL_NEGOCIO = `
 NOMBRE DEL NEGOCIO: LAS MARGARITAS BY DIGITALBROS
@@ -646,6 +650,28 @@ async function enviarTicketReserva(to, phone_id, nombreCliente, fecha, hora, per
 
 
 // 5. GESTIÓN DE SEGUIMIENTOS (Follow-ups)
+
+/**
+ * Generar mensaje de seguimiento personalizado según el progreso del usuario
+ * @param {string} ultimo_paso - Último paso registrado del usuario
+ * @returns {string} - Mensaje personalizado con tono Vicentico
+ */
+function generarMensajeSeguimiento(ultimo_paso) {
+    const mensajes = {
+        'inicio': '¡Qué onda! ¿Se te ofrece algo más o ya te decidiste por los tacos? 🌮',
+
+        'viendo_menu': '¿Ya encontraste tus tacos favoritos en el menú, mi estimado? Si quieres una recomendación de la casa, nomás me chiflas. 🌵',
+
+        'viendo_ubicacion': '¿Ya checaste cómo llegar? Si tienes alguna duda del camino o quieres hacer tu reserva, aquí ando al pendiente. 📍',
+
+        'dando_datos': '¡Órale! Vi que estabas por apartar tu mesa. ¿Hubo alguna duda con la fecha o te ayudo a confirmar los detalles? 📅',
+
+        'esperando_pago': 'Disculpa que insista, compadre, pero aún no me ha llegado tu comprobante de pago. ¿Tuviste algún problema para hacer el abono? Te espero para confirmar tu reserva. 💳'
+    };
+
+    return mensajes[ultimo_paso] || mensajes['inicio'];
+}
+
 function cancelarSeguimiento(to) {
     if (timers[to]) {
         clearTimeout(timers[to].timer1);
@@ -668,7 +694,7 @@ function programarSeguimientoPago(to, phone_id) {
             await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
                 messaging_product: "whatsapp",
                 to: to,
-                text: { body: "¡Hola! 🏺 La Faraona te saluda. Aún tengo tu mesa reservada en el corazón de Girardot, pero el tiempo corre y otros viajeros la desean. ¿Pudiste realizar el abono?" }
+                text: { body: "¡Qué onda, compadre! Aún tengo tu mesa apartada, pero otros clientes también la andan queriendo. ¿Ya pudiste hacer el abono? Mándame el comprobante para confirmarte al 100. 🌮💚" }
             }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
             delete timers[to];
         } catch (e) { console.error("Error en Follow-up PAGO:", e.message); }
@@ -680,32 +706,55 @@ function programarSeguimientoPago(to, phone_id) {
 function programarSeguimiento(to, phone_id) {
     cancelarSeguimiento(to); // Limpiar previos
 
-    console.log(`⏳ Programando seguimientos para ${to}...`);
+    console.log(`⏳ Programando seguimientos contextuales para ${to}...`);
 
-    // Timer 1: 2 minutos (120,000 ms)
+    // Timer 1: 3 minutos
     const t1 = setTimeout(async () => {
         try {
             console.log(`⏰ Ejecutando Follow-up 1 para ${to}`);
+
+            // Consultar progreso actual del usuario desde la DB
+            const reserva = await db.getReserva(to);
+            const ultimoPaso = reserva?.ultimo_paso || 'inicio';
+            const mensaje = generarMensajeSeguimiento(ultimoPaso);
+
+            console.log(`📊 Follow-up contexto: ultimo_paso="${ultimoPaso}"`);
+
             await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
                 messaging_product: "whatsapp",
                 to: to,
-                text: { body: "¿Encontraste tu manjar favorito o prefieres que te recomiende la especialidad del chef para tu reserva? 👑" }
+                text: { body: mensaje }
             }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
         } catch (e) { console.error("Error en Follow-up 1:", e.message); }
-    }, 2 * 60 * 1000);
+    }, 3 * 60 * 1000); // 3 minutos
 
-    // Timer 2: 15 minutos (900,000 ms)
+    // Timer 2: 20 minutos
     const t2 = setTimeout(async () => {
         try {
             console.log(`⏰ Ejecutando Follow-up 2 para ${to}`);
+
+            // Consultar progreso nuevamente por si cambió
+            const reserva = await db.getReserva(to);
+            const ultimoPaso = reserva?.ultimo_paso || 'inicio';
+
+            let mensajeFinal;
+            if (ultimoPaso === 'esperando_pago') {
+                mensajeFinal = '¡Ey! No quisiera que pierdas tu lugar. Las mesas para el fin de semana se van rapidito. ¿Me mandas el comprobante de pago para asegurarte tu mesa? 🌮✨';
+            } else {
+                mensajeFinal = '¡Órale! ¿Todavía por ahí? Si necesitas ayuda para reservar o tienes alguna pregunta, aquí sigo al tiro. Las mesas se van volando. 🚀';
+            }
+
+            console.log(`📊 Follow-up 2 contexto: ultimo_paso="${ultimoPaso}"`);
+
             await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
                 messaging_product: "whatsapp",
                 to: to,
-                text: { body: "No quisiera que te quedaras sin tu lugar en el reino. Nuestras mesas para la experiencia de las 9:00 p.m. con DJ son muy codiciadas. ¿Te aseguro un espacio? ✨🏺" }
+                text: { body: mensajeFinal }
             }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+
             delete timers[to]; // Limpiar memoria al finalizar
         } catch (e) { console.error("Error en Follow-up 2:", e.message); }
-    }, 15 * 60 * 1000);
+    }, 20 * 60 * 1000); // 20 minutos
 
     timers[to] = { timer1: t1, timer2: t2 };
 }
@@ -723,6 +772,17 @@ app.post("/webhook", async (req, res) => {
         const msg = value.messages[0];
         const from = msg.from;
         const phone_id = value.metadata.phone_number_id;
+
+        // 🔄 DEDUPLICACIÓN: Verificar si ya procesamos este mensaje
+        const msgId = msg.id;
+        if (mensajesProcesados.has(msgId)) {
+            console.log(`⏭️ Mensaje duplicado ignorado: ${msgId}`);
+            return;
+        }
+
+        // Agregar mensaje al caché y programar su eliminación
+        mensajesProcesados.add(msgId);
+        setTimeout(() => mensajesProcesados.delete(msgId), TIEMPO_CACHE_MENSAJES);
 
         // CANCELAR SEGUIMIENTOS PREVIOS (El cliente habló)
         cancelarSeguimiento(from);
@@ -956,36 +1016,51 @@ app.post("/webhook", async (req, res) => {
             const textoLower = msg.text.body.toLowerCase();
             const respuestaLower = respuestaFaraon.toLowerCase();
 
-            // 1. Detectar y guardar NOMBRE (primera captura con sincronización)
+            // 1. Detectar y guardar NOMBRE (extraer de la respuesta de Gemini)
             if (!sesionesActivas[from] || sesionesActivas[from].length < 3) {
-                // Es uno de los primeros mensajes - probablemente el nombre
+                // Es uno de los primeros mensajes - Gemini probablemente detectó el nombre
                 if (respuestaLower.includes('bienvenido') || respuestaLower.includes('caballero') || respuestaLower.includes('dama')) {
-                    console.log(`🔍 SINCRONIZACIÓN: Verificando reserva EN_PROCESO para ${from}...`);
+                    console.log(`🔍 SINCRONIZACIÓN: Gemini detectó un nombre, extrayendo...`);
 
-                    // PASO 1: Verificar si ya existe reserva EN_PROCESO (SELECT antes de INSERT)
+                    // PASO 1: Verificar si ya existe reserva EN_PROCESO
                     const reservaExistente = await db.getReserva(from);
 
-                    if (reservaExistente) {
-                        console.log(`📋 Reserva EN_PROCESO encontrada (ID: ${reservaExistente.id})`);
-                        console.log(`   - Nombre actual en DB: "${reservaExistente.nombre || '(vacío)'}"`);
+                    if (reservaExistente?.nombre) {
+                        console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
                     } else {
-                        console.log(`🆕 No hay reserva EN_PROCESO, se creará una nueva`);
-                    }
+                        // PASO 2: Extraer nombre de la respuesta de Gemini
+                        // Buscar patrones como "Bienvenido, Juan" o "Caballero Nicolás" o "Dama María"
+                        let nombreExtraido = null;
 
-                    // PASO 2: Crear o actualizar reserva
-                    await db.createOrGetReserva(from);
-                    const nombreCapturado = msg.text.body.trim();
-                    await db.updateReserva(from, { nombre: nombreCapturado });
+                        // Patrón 1: "Bienvenido, [Nombre]" o "Bienvenida, [Nombre]"
+                        const patronBienvenido = /bienvenid[oa],?\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                        const matchBienvenido = respuestaFaraon.match(patronBienvenido);
 
-                    // PASO 3: Verificar que se guardó correctamente (SELECT después de UPDATE)
-                    const reservaActualizada = await db.getReserva(from);
-                    if (reservaActualizada && reservaActualizada.nombre) {
-                        console.log(`✅ NOMBRE GUARDADO EXITOSAMENTE en DB:`);
-                        console.log(`   - WhatsApp ID: ${from}`);
-                        console.log(`   - Nombre: "${reservaActualizada.nombre}"`);
-                        console.log(`   - ID Reserva: ${reservaActualizada.id}`);
-                    } else {
-                        console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
+                        // Patrón 2: "Caballero [Nombre]" o "Dama [Nombre]"
+                        const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                        const matchCaballero = respuestaFaraon.match(patronCaballero);
+
+                        if (matchBienvenido) {
+                            nombreExtraido = matchBienvenido[1].trim();
+                        } else if (matchCaballero) {
+                            nombreExtraido = matchCaballero[1].trim();
+                        }
+
+                        // PASO 3: Guardar solo si se extrajo un nombre válido
+                        if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey)/i.test(nombreExtraido)) {
+                            await db.createOrGetReserva(from);
+                            await db.updateReserva(from, { nombre: nombreExtraido });
+
+                            // PASO 4: Verificar que se guardó
+                            const reservaActualizada = await db.getReserva(from);
+                            if (reservaActualizada?.nombre) {
+                                console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
+                            } else {
+                                console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
+                            }
+                        } else {
+                            console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta`);
+                        }
                     }
                 }
             }
@@ -993,13 +1068,13 @@ app.post("/webhook", async (req, res) => {
             // 2. Detectar y guardar TIPO DE RESERVA (con verificación)
             if (textoLower.includes('decoración') || textoLower.includes('decoracion') ||
                 textoLower.includes('decorada') || textoLower.includes('fiesta')) {
-                await db.updateReserva(from, { tipo: 'Decoración' });
+                await db.updateReserva(from, { tipo: 'Decoración', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
                 const verificacion = await db.getReserva(from);
                 console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo})`);
             } else if (textoLower.includes('estándar') || textoLower.includes('estandar') ||
                 textoLower.includes('consumible') || textoLower.includes('normal') ||
                 textoLower.includes('sin decoración') || textoLower.includes('sin decoracion')) {
-                await db.updateReserva(from, { tipo: 'Estándar' });
+                await db.updateReserva(from, { tipo: 'Estándar', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
                 const verificacion = await db.getReserva(from);
                 console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo})`);
             }
@@ -1061,6 +1136,7 @@ app.post("/webhook", async (req, res) => {
             // Detectar variaciones como [ MENÚ_MEX ] o [MENÚ MEX]
             if (/\[\s*MENÚ_MEX\s*\]/i.test(respuestaFaraon) || /\[\s*MENU_MEX\s*\]/i.test(respuestaFaraon)) {
                 await enviarMenuWhatsApp(ID_CARTA_REST, from, phone_id);
+                await db.updateReserva(from, { ultimo_paso: 'viendo_menu' }); // 📊 Actualizar progreso
                 scriptAudio = scriptAudio.replace(/\[\s*MENÚ_MEX\s*\]/gi, "").replace(/\[\s*MENU_MEX\s*\]/gi, "");
                 menuEnviado = true;
             }
@@ -1069,12 +1145,14 @@ app.post("/webhook", async (req, res) => {
             // 2. Detección de UBICACIÓN
             if (/\[\s*UBICACIÓN\s*\]/i.test(respuestaFaraon) || /\[\s*UBICACION\s*\]/i.test(respuestaFaraon)) {
                 await enviarUbicacion(from, phone_id);
+                await db.updateReserva(from, { ultimo_paso: 'viendo_ubicacion' }); // 📊 Actualizar progreso
                 scriptAudio = scriptAudio.replace(/\[\s*UBICACIÓN\s*\]/gi, "").replace(/\[\s*UBICACION\s*\]/gi, "");
             }
 
             // 3. Detección de DATOS DE PAGO
             if (/\[\s*DATOS_PAGO\s*\]/i.test(respuestaFaraon) || /\[\s*DATOS PAGO\s*\]/i.test(respuestaFaraon)) {
                 await enviarImagenPago(from, phone_id);
+                await db.updateReserva(from, { ultimo_paso: 'esperando_pago' }); // 📊 Actualizar progreso
                 programarSeguimientoPago(from, phone_id); // Iniciar timer 24h
                 scriptAudio = scriptAudio.replace(/\[\s*DATOS_PAGO\s*\]/gi, "").replace(/\[\s*DATOS PAGO\s*\]/gi, "");
             }
