@@ -424,6 +424,8 @@ async function enviarUbicacion(to, phone_number_id) {
 
 async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
     try {
+        console.log(`🔔 Notificando al admin sobre pago de ${from}. Media ID: ${mediaId}`);
+
         // 1. Extraer resumen con Gemini (más rápido que procesar todo manualmente)
         const modeloConFecha = genAI.getGenerativeModel({
             model: "gemini-2.5-pro",
@@ -433,6 +435,8 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
         const result = await chatAdmin.sendMessage("Extrae un resumen de la reserva en formato texto plano: Nombre, Fecha, Hora, Personas, Decoración, Cumpleaños. Sé breve.");
         const resumen = result.response.text();
 
+        console.log(`📝 Resumen generado: ${resumen.substring(0, 100)}...`);
+
         // 2. Guardar en pagos pendientes de confirmación
         pagosPendientes[from] = {
             nombre: nombreCliente || "Cliente",
@@ -441,6 +445,7 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
         };
 
         // 3. Enviar Mensaje Interactivo al Admin con BOTONES
+        console.log(`📤 Enviando mensaje con botones al admin: ${ADMIN_NUMBER}`);
         await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
             messaging_product: "whatsapp",
             to: ADMIN_NUMBER,
@@ -470,15 +475,26 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
                 }
             }
         }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+        console.log(`✅ Mensaje con botones enviado`);
 
         // 4. Reenviar Comprobante (Usando el Media ID original)
+        console.log(`🖼️ Esperando 3.5s antes de reenviar imagen...`);
         await new Promise(resolve => setTimeout(resolve, 3500)); // Esperar propagación (Fix Error 400 - 3.5s delay)
+
+        console.log(`📤 Reenviando imagen al admin. Media ID: ${mediaId}`);
         await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
             messaging_product: "whatsapp", to: ADMIN_NUMBER, type: "image", image: { id: mediaId }
         }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+        console.log(`✅ Imagen reenviada al admin`);
 
         console.log("✅ Notificación con botones enviada al Admin. Esperando confirmación...");
-    } catch (e) { console.error("❌ Error notificando admin:", e.message); }
+    } catch (e) {
+        console.error("❌ Error notificando admin:", e.message);
+        if (e.response) {
+            console.error("🔴 Status:", e.response.status);
+            console.error("🔴 Data:", JSON.stringify(e.response.data, null, 2));
+        }
+    }
 }
 
 
