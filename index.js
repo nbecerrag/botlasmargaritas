@@ -712,6 +712,9 @@ function programarSeguimiento(to, phone_id) {
 
 // 6. EL PROCESADOR PRINCIPAL (Webhook)
 app.post("/webhook", async (req, res) => {
+    // 📢 ESTE LOG ES PARA SABER SI META ESTÁ LLEGANDO
+    console.log("📩 ¡ATENCIÓN! Llegó una notificación de Meta al Webhook.");
+
     res.sendStatus(200);
     try {
         const value = req.body.entry?.[0]?.changes?.[0]?.value;
