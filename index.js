@@ -323,10 +323,10 @@ async function enviarAudioWhatsApp(texto, to, phone_number_id) {
     const rutaAudio = path.join(__dirname, 'voz_vicentico.mp3');
 
     try {
-        console.log("🔊 Generando voz con gTTS (Español Mexicano):", textoParaVoz.substring(0, 50) + "...");
+        console.log("🔊 Generando voz con gTTS (Español):", textoParaVoz.substring(0, 50) + "...");
 
-        // Generar audio con gTTS (español mexicano)
-        const gtts = new gTTS(textoParaVoz, 'es-mx'); // 'es-mx' para español mexicano
+        // Generar audio con gTTS (español genérico - 'es' o 'es-us')
+        const gtts = new gTTS(textoParaVoz, 'es'); // 'es' para español genérico
 
         // Guardar el archivo de audio
         await new Promise((resolve, reject) => {
