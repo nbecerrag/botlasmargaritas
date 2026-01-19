@@ -1,0 +1,88 @@
+{
+    "negocio": {
+        "nombre": "Keops Girardot",
+        "ubicacion": "Girardot",
+        "horarios": "Restaurante: 8:00 PM - 11:50 PM. Discoteca: 11:00 PM - 4:00 AM.",
+        "mensaje_bienvenida": "¡Bienvenido a Keops! Donde la fiesta y la buena comida se encuentran. 🍔🍹"
+    },
+    "experiencias": [
+        {
+            "nombre": "Faraón",
+            "precio": "350.000",
+            "descripcion": "Botella de Whisky 12 Años + 2 Sodas. La experiencia VIP."
+        },
+        {
+            "nombre": "Azteca",
+            "precio": "260.000",
+            "descripcion": "Botella de Jose Cuervo/Olmeca + 4 Coronas."
+        },
+        {
+            "nombre": "Plebeya",
+            "precio": "200.000",
+            "descripcion": "Botella de Antioqueño + 4 Coronas."
+        }
+    ],
+    "menu": {
+        "entradas": [
+            {
+                "plato": "Tostones con Hogao",
+                "precio": "22.000",
+                "desc": "4 patacones crocantes con hogao y suero"
+            },
+            {
+                "plato": "Empanadas",
+                "precio": "24.000",
+                "desc": "4 empanadas de la casa con ají"
+            },
+            {
+                "plato": "Chicharrones / Panceta",
+                "precio": "32.000",
+                "desc": "200gr de panceta con patacón"
+            }
+        ],
+        "fuertes": [
+            {
+                "plato": "Salmón a la Parrilla",
+                "precio": "66.000",
+                "desc": "Acompañado de ensalada y papa rústica"
+            },
+            {
+                "plato": "Cazuela de Mariscos",
+                "precio": "79.000",
+                "desc": "Con leche de coco, arroz y patacón"
+            },
+            {
+                "plato": "Hamburguesa Clásica",
+                "precio": "26.000",
+                "desc": "Res, tocineta, queso cheddar y papas"
+            },
+            {
+                "plato": "Hamburguesa Faraón",
+                "precio": "38.000",
+                "desc": "Res + Pollo, aros de cebolla y tocineta"
+            }
+        ],
+        "licores": [
+            {
+                "nombre": "Whisky Sello Azul",
+                "precio": "2.500.000",
+                "tipo": "Botella"
+            },
+            {
+                "nombre": "Buchanan's 18 Años",
+                "precio": "850.000",
+                "tipo": "Botella"
+            },
+            {
+                "nombre": "Aguardiente Antioqueño",
+                "precio": "170.000",
+                "tipo": "Botella"
+            },
+            {
+                "nombre": "Coctel Margarita",
+                "precio": "33.000",
+                "tipo": "Copa"
+            }
+        ]
+    }
+}
