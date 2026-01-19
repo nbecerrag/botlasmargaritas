@@ -24,8 +24,8 @@ const ID_CARTA_REST = process.env.ID_CARTA_REST;
 const ID_IMAGEN_PAGO = process.env.ID_IMAGEN_PAGO;
 const ID_AUDIO_CONFIRMACION = process.env.ID_AUDIO_CONFIRMACION;
 const ADMIN_NUMBER = process.env.ADMIN_NUMBER;
-const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY;
-const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID;
+// const ELEVENLABS_API_KEY = process.env.ELEVENLABS_API_KEY; // ⚠️ Deshabilitado - créditos agotados
+// const ELEVENLABS_VOICE_ID = process.env.ELEVENLABS_VOICE_ID; // ⚠️ Deshabilitado - créditos agotados
 
 // Datos de ubicación del restaurante
 const UBICACION = {
@@ -301,11 +301,11 @@ function aplicarFonetica(texto) {
 }
 
 async function enviarAudioWhatsApp(texto, to, phone_number_id) {
-    // 1. Limpieza Mínima (Gemini ya hace el trabajo pesado)
+    // 1. Limpieza de texto para TTS
     let textoParaVoz = texto
-        .replace(/Keops/gi, 'kéops')   // Fonética exacta
-        .replace(/Girardot/gi, 'Hhirardot') // Fonética exacta
-        .replace(/[^\w\s\u00C0-\u00FF,\.\(\)?¡!¿ñÑ…\-]/g, '') // Permitir puntos suspensivos, guiones, etc.
+        .replace(/Keops/gi, 'Quéops')   // Fonética mejorada para español
+        .replace(/Girardot/gi, 'Jirardot') // Fonética mejorada para español
+        .replace(/[^\w\s\u00C0-\u00FF,\.\(\)?¡!¿ñÑ…\-]/g, '') // Limpiar caracteres especiales
         .trim();
 
     // Asegurar punto final
@@ -314,53 +314,38 @@ async function enviarAudioWhatsApp(texto, to, phone_number_id) {
     // Normalizar espacios
     textoParaVoz = textoParaVoz.replace(/\s+/g, ' ');
 
-    // VALIDACIÓN: Evitar enviar texto vacío o solo signos a ElevenLabs
+    // VALIDACIÓN: Evitar enviar texto vacío
     if (!textoParaVoz.replace(/[^a-zA-Z0-9\u00C0-\u00FF]/g, '').trim()) {
         console.warn("⚠️ Advertencia: El texto para voz estaba vacío o solo tenía signos. Se omitió el audio.");
         return;
     }
 
-    const ELEVEN_API_KEY = ELEVENLABS_API_KEY;
-    const VOICE_ID = ELEVENLABS_VOICE_ID; // Vicentico voice
-    const rutaAudio = path.join(__dirname, 'voz_faraon.mp3');
+    const rutaAudio = path.join(__dirname, 'voz_vicentico.mp3');
 
     try {
-        console.log("🔊 Generando voz (Fonética):", textoParaVoz.substring(0, 50) + "...");
-        const response = await axios({
-            method: 'POST',
-            url: `https://api.elevenlabs.io/v1/text-to-speech/${VOICE_ID}`,
-            headers: {
-                'xi-api-key': ELEVEN_API_KEY,
-                'Content-Type': 'application/json',
-                'Accept': 'audio/mpeg'
-            },
-            data: {
-                text: textoParaVoz,
-                model_id: "eleven_multilingual_v2",
-                voice_settings: {
-                    stability: 0.6,    // Estabilidad ALTA para evitar variaciones raras
-                    similarity_boost: 0.8,
-                    style: 0.0,        // Estilo moderado
-                    use_speaker_boost: true
-                }
-            },
-            responseType: 'stream'
-        });
+        console.log("🔊 Generando voz con gTTS (Español Mexicano):", textoParaVoz.substring(0, 50) + "...");
 
-        // 3. Guardar el archivo de audio
-        const writer = fs.createWriteStream(rutaAudio);
-        response.data.pipe(writer);
+        // Generar audio con gTTS (español mexicano)
+        const gtts = new gTTS(textoParaVoz, 'es-mx'); // 'es-mx' para español mexicano
 
+        // Guardar el archivo de audio
         await new Promise((resolve, reject) => {
-            writer.on('finish', resolve);
-            writer.on('error', reject);
+            gtts.save(rutaAudio, (err) => {
+                if (err) {
+                    reject(err);
+                } else {
+                    console.log("✅ Audio generado con gTTS");
+                    resolve();
+                }
+            });
         });
 
-        // ⏳ Esperar 1 segundo para asegurar que el archivo se libere
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        // ⏳ Esperar 500ms para asegurar que el archivo se libere
+        await new Promise(resolve => setTimeout(resolve, 500));
 
         console.log("📤 Subiendo audio a WhatsApp...");
-        // 4. Enviar a WhatsApp
+
+        // Enviar a WhatsApp
         const form = new FormData();
         form.append('file', fs.createReadStream(rutaAudio));
         form.append('type', 'audio/mpeg');
@@ -377,12 +362,12 @@ async function enviarAudioWhatsApp(texto, to, phone_number_id) {
             audio: { id: uploadRes.data.id }
         }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
 
-        console.log("✅ Audio enviado correctamente.");
+        console.log("✅ Audio enviado correctamente con gTTS.");
 
     } catch (error) {
         console.error("❌ Error en proceso de audio:");
         if (error.response) {
-            // Error de la API (ElevenLabs o WhatsApp)
+            // Error de la API de WhatsApp
             console.error("Status:", error.response.status);
             console.error("Data:", error.response.data);
         } else {
