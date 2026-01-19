@@ -1116,29 +1116,33 @@ app.post("/webhook", async (req, res) => {
     } catch (e) { console.error("🔥 Error crítico:", e.message); }
 });
 
-app.get("/webhook", (req, res) => {
-    if (req.query["hub.verify_token"] === verifyToken) res.status(200).send(req.query["hub.challenge"]);
-    else res.sendStatus(403);
-});
+// --- ESTA ES LA PARTE QUE FALTA ---
 
-const PORT = process.env.PORT || 3001;
-
-// Verificar conexión a base de datos al iniciar
-db.testConnection().then(connected => {
-    if (connected) {
-        console.log('✅ Base de datos PostgreSQL lista');
-    } else {
-        console.warn('⚠️ Base de datos no conectada - el bot funcionará sin persistencia');
-    }
-});
-
-// 🩺 RUTA DE SALUD PARA RENDER
-// Esto le dice a Render que el bot está vivo y funcionando bien.
+// 🩺 RUTA DE SALUD PARA RENDER (OBLIGATORIA)
 app.get("/healthz", (req, res) => {
     res.status(200).send("Vicentico está vivo y listo para los tacos 🌵🌮");
 });
 
-app.listen(PORT, () => console.log(`🌮 Bot Las Margaritas listo en puerto ${PORT}.`));
+// Verificación del Webhook (GET)
+app.get("/webhook", (req, res) => {
+    if (req.query["hub.verify_token"] === verifyToken) {
+        res.status(200).send(req.query["hub.challenge"]);
+    } else {
+        res.sendStatus(403);
+    }
+});
+
+// Configuración del Puerto (Render usa el 10000 por defecto)
+const PORT = process.env.PORT || 10000;
+
+// Verificar conexión a base de datos e iniciar servidor
+db.testConnection().then(connected => {
+    if (connected) {
+        app.listen(PORT, () => console.log(`🌮 Bot Las Margaritas listo en puerto ${PORT}.`));
+    } else {
+        console.error('❌ Error crítico: No se pudo conectar a la base de datos. El bot no iniciará.');
+    }
+});
 
 // Manejo de cierre limpio
 process.on('SIGTERM', async () => {
