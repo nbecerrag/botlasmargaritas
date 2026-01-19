@@ -1132,6 +1132,12 @@ db.testConnection().then(connected => {
     }
 });
 
+// 🩺 RUTA DE SALUD PARA RENDER
+// Esto le dice a Render que el bot está vivo y funcionando bien.
+app.get("/healthz", (req, res) => {
+    res.status(200).send("Vicentico está vivo y listo para los tacos 🌵🌮");
+});
+
 app.listen(PORT, () => console.log(`🌮 Bot Las Margaritas listo en puerto ${PORT}.`));
 
 // Manejo de cierre limpio
