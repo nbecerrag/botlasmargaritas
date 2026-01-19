@@ -32,21 +32,22 @@ pool.on('error', (err) => {
  */
 async function createOrGetReserva(wa_id) {
     try {
-        // 1. Buscar SOLO reservas EN_PROCESO para este cliente
+        // 1. Buscar reservas ACTIVAS (EN_PROCESO, pendiente, enviado) para este cliente
         const activeQuery = `
             SELECT * FROM reservas 
-            WHERE wa_id = $1 AND estado_pago = 'EN_PROCESO'
+            WHERE wa_id = $1 
+              AND estado_pago IN ('EN_PROCESO', 'pendiente', 'enviado')
             ORDER BY created_at DESC
             LIMIT 1
         `;
         const activeResult = await pool.query(activeQuery, [wa_id]);
 
         if (activeResult.rows.length > 0) {
-            console.log(`📋 Reserva EN_PROCESO encontrada para ${wa_id}`);
+            console.log(`📋 Reserva ACTIVA encontrada para ${wa_id} (estado: ${activeResult.rows[0].estado_pago})`);
             return activeResult.rows[0];
         }
 
-        // 2. Si no existe reserva EN_PROCESO, crear una nueva
+        // 2. Si no existe reserva ACTIVA, crear una nueva
         // (Ignoramos reservas anteriores confirmadas/rechazadas)
         const insertQuery = `
             INSERT INTO reservas (wa_id, estado_pago)
@@ -76,7 +77,7 @@ async function updateReserva(wa_id, data) {
         // Asegurar que existe una reserva EN_PROCESO primero
         await createOrGetReserva(wa_id);
 
-        const allowedFields = ['nombre', 'fecha', 'hora', 'personas', 'tipo', 'estado_pago'];
+        const allowedFields = ['nombre', 'fecha', 'hora', 'personas', 'tipo', 'estado_pago', 'ultimo_paso'];
         const updates = [];
         const values = [];
         let paramIndex = 1;
