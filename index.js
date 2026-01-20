@@ -530,6 +530,55 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
     }
 }
 
+/**
+ * Notificar al admin sobre un cambio de reserva solicitado por el cliente
+ * @param {string} from - Número del cliente
+ * @param {string} phone_id - ID del teléfono
+ * @param {Object} datosOriginales - Datos de la reserva original
+ * @param {Object} datosNuevos - Nuevos datos solicitados
+ */
+async function notificarCambioReserva(from, phone_id, datosOriginales, datosNuevos) {
+    try {
+        // Generar código interno único para este cambio
+        const codigoInterno = `CHG-${Date.now().toString().slice(-8)}`;
+
+        console.log(`🔄 Notificando cambio de reserva al admin. Código: ${codigoInterno}`);
+
+        const mensaje = `🔄 SOLICITUD DE CAMBIO DE RESERVA
+        
+📋 Código Interno: ${codigoInterno}
+📱 Cliente: ${from}
+👤 Nombre: ${datosOriginales.nombre || 'N/A'}
+
+📌 DATOS ORIGINALES:
+• Fecha: ${datosOriginales.fecha || 'N/A'}
+• Hora: ${datosOriginales.hora || 'N/A'}  
+• Personas: ${datosOriginales.personas || 'N/A'}
+• Tipo: ${datosOriginales.tipo_reserva || 'N/A'}
+
+🔄 DATOS NUEVOS SOLICITADOS:
+• Fecha: ${datosNuevos.fecha || 'Sin cambio'}
+• Hora: ${datosNuevos.hora || 'Sin cambio'}
+• Personas: ${datosNuevos.personas || 'Sin cambio'}
+
+⚠️ El cliente solicitó este cambio con más de 24h de anticipación.
+Revisa disponibilidad y aprueba/rechaza el cambio.`;
+
+        await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+            messaging_product: "whatsapp",
+            to: ADMIN_NUMBER,
+            text: { body: mensaje }
+        }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+
+        console.log(`✅ Admin notificado sobre cambio. Código: ${codigoInterno}`);
+        return codigoInterno;
+
+    } catch (error) {
+        console.error("❌ Error notificando cambio al admin:", error.message);
+        return null;
+    }
+}
+
 
 
 // 4.5 GENERACIÓN DE TICKETS GRÁFICOS
@@ -777,6 +826,65 @@ async function programarRecordatorioReserva(to, phone_id, fecha, hora, nombre, p
     }
 }
 
+/**
+ * Programar mensaje de feedback 24 horas DESPUÉS de la reserva
+ * @param {string} to - Número de WhatsApp del cliente
+ * @param {string} phone_id - ID del teléfono de WhatsApp Business
+ * @param {string} fecha - Fecha de la reserva (dd/mm/yyyy)
+ * @param {string} hora - Hora de la reserva (HH:mm:ss)
+ * @param {string} nombre - Nombre del cliente
+ */
+async function programarFeedbackPostReserva(to, phone_id, fecha, hora, nombre) {
+    try {
+        console.log(`💬 Programando feedback post-reserva para ${to}: ${fecha} ${hora}`);
+
+        // Parsear fecha y hora
+        const [dia, mes, anio] = fecha.split('/').map(Number);
+        const [horas, minutos] = hora.split(':').map(Number);
+
+        // Crear objeto Date con la fecha/hora de la reserva
+        const fechaReserva = new Date(anio, mes - 1, dia, horas, minutos);
+
+        // Calcular 24 horas DESPUÉS de la reserva
+        const fechaFeedback = new Date(fechaReserva.getTime() + (24 * 60 * 60 * 1000));
+
+        // Calcular cuánto tiempo falta hasta el feedback
+        const ahora = new Date();
+        const tiempoHastaFeedback = fechaFeedback.getTime() - ahora.getTime();
+
+        if (tiempoHastaFeedback <= 0) {
+            console.log(`⚠️ La fecha ya pasó, no se programa feedback`);
+            return;
+        }
+
+        console.log(`📅 Feedback programado para: ${fechaFeedback.toLocaleString('es-CO')}`);
+        console.log(`⏳ Tiempo hasta feedback: ${Math.round(tiempoHastaFeedback / 1000 / 60 / 60)} horas`);
+
+        // Programar el feedback
+        setTimeout(async () => {
+            try {
+                console.log(`💌 Enviando solicitud de feedback a ${to}...`);
+
+                const mensajeFeedback = `¡Qué onda, ${nombre}! Espero que la hayas pasado de lujo ayer en Las Margaritas. 🌮✨ Me encantaría saber cómo te fue. ¿Qué tal estuvo todo? ¿Los tacos? ¿El servicio? ¿La atención? Tu opinión es oro para nosotros, compadre. 🙏`;
+
+                // Enviar como texto (no audio para no ser invasivo)
+                await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+                    messaging_product: "whatsapp",
+                    to: to,
+                    text: { body: mensajeFeedback }
+                }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+
+                console.log(`✅ Feedback solicitado exitosamente a ${to}`);
+            } catch (error) {
+                console.error(`❌ Error enviando feedback a ${to}:`, error.message);
+            }
+        }, tiempoHastaFeedback);
+
+    } catch (error) {
+        console.error(`❌ Error programando feedback:`, error.message);
+    }
+}
+
 function programarSeguimiento(to, phone_id) {
     cancelarSeguimiento(to); // Limpiar previos
 
@@ -972,7 +1080,16 @@ app.post("/webhook", async (req, res) => {
                             tipoReserva
                         );
                     }
-
+                    // Después de confirmar y enviar ticket
+                    await programarRecordatorioReserva(
+                        clienteNumero,
+                        phone_id,
+                        fecha,      // "20/01/2026"
+                        hora,       // "19:00:00"
+                        nombre,     // "Juan"
+                        personas,   // 4
+                        tipo        // "estandar" o "decoracion"
+                    );
                     // Confirmar al admin
                     await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
                         messaging_product: "whatsapp",
