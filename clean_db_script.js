@@ -11,7 +11,7 @@ const db = require('./db');
         console.log('✅ Registros eliminados');
 
         // Reiniciar secuencia de ID
-        await db.pool.query("SELECT setval('reservas_id_seq', 0, false)");
+        await db.pool.query("ALTER SEQUENCE reservas_id_seq RESTART WITH 1");
         console.log('✅ Secuencia de ID reiniciada');
 
         // Verificar

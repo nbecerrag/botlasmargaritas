@@ -11,10 +11,3 @@ ALTER SEQUENCE reservas_id_seq RESTART WITH 1;
 -- Verificar que la tabla quedó vacía
 SELECT COUNT(*) as total_registros FROM reservas;
 -- Resultado esperado: 0
-
--- Verificar que la secuencia se reinició
-SELECT nextval('reservas_id_seq') as proximo_id;
--- Resultado esperado: 1
-
-SELECT setval('reservas_id_seq', 0, false);
--- Esto asegura que el próximo INSERT use id=1
