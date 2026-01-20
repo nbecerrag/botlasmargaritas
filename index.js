@@ -66,6 +66,10 @@ const usuariosProcesando = new Set();
 const ultimoMensajeUsuario = {}; // { [wa_id]: timestamp }
 const TIEMPO_ENTRE_MENSAJES_VOZ = 30 * 1000; // 30 segundos
 
+// 📦 BUFFER DE MENSAJES: Para agrupar mensajes consecutivos
+const bufferMensajes = {}; // { [wa_id]: { mensajes: [], timer: timeout } }
+const TIEMPO_ESPERA_AGRUPACION = 3000; // 3 segundos para agrupar mensajes
+
 // 2. EL MENÚ (Cerebro del Faraón)
 const DATOS_DEL_NEGOCIO = `
 NOMBRE DEL NEGOCIO: LAS MARGARITAS BY DIGITALBROS
@@ -1198,11 +1202,17 @@ app.post("/webhook", async (req, res) => {
             // Limpieza final de seguridad para el audio (quitar etiquetas si quedaron)
             scriptAudio = scriptAudio.replace(/<[^>]*>/g, '').trim();
 
-            // ⏱️ DECISIÓN: Voz o Texto (según tiempo entre mensajes)
+            // ⏱️ DECISIÓN: Voz o Texto (según tiempo entre mensajes Y estado del usuario)
             const ahora = Date.now();
             const ultimoMensaje = ultimoMensajeUsuario[from] || 0;
             const tiempoTranscurrido = ahora - ultimoMensaje;
-            const usarVoz = tiempoTranscurrido > TIEMPO_ENTRE_MENSAJES_VOZ || ultimoMensaje === 0;
+
+            // Verificar si el usuario tiene nombre en la DB
+            const reservaActual = await db.getReserva(from);
+            const tieneNombre = reservaActual?.nombre && reservaActual.nombre.length > 0;
+
+            // PRIMER MENSAJE SIEMPRE AUDIO, o si no tiene nombre, o si pasó tiempo suficiente
+            const usarVoz = !tieneNombre || ultimoMensaje === 0 || tiempoTranscurrido > TIEMPO_ENTRE_MENSAJES_VOZ;
 
             // Actualizar timestamp
             ultimoMensajeUsuario[from] = ahora;
