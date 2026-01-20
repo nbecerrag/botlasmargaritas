@@ -1318,7 +1318,7 @@ app.post("/webhook", async (req, res) => {
                     }
 
                     // PASO 3: Guardar solo si se extrajo un nombre válido
-                    if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre|margaritas|las)/i.test(nombreExtraido)) {
+                    if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre|margaritas|las|mi|dama|caballero)$/i.test(nombreExtraido) && nombreExtraido.toLowerCase() !== 'mi estimado') {
                         await db.createOrGetReserva(from);
                         await db.updateReserva(from, { nombre: nombreExtraido });
 
@@ -1500,7 +1500,7 @@ app.post("/webhook", async (req, res) => {
         // SAFETY: from puede no estar definido si el error ocurrió antes de su declaración
         if (typeof from !== 'undefined' && from) {
             usuariosProcesando.delete(from);
-        
+
             console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
         }
     }
