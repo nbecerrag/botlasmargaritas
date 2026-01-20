@@ -1500,7 +1500,8 @@ app.post("/webhook", async (req, res) => {
         // SAFETY: from puede no estar definido si el error ocurrió antes de su declaración
         if (typeof from !== 'undefined' && from) {
             usuariosProcesando.delete(from);
-        console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
+        
+            console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
         }
     }
 });
