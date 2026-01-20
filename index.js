@@ -1080,16 +1080,33 @@ app.post("/webhook", async (req, res) => {
                             tipoReserva
                         );
                     }
-                    // Después de confirmar y enviar ticket
-                    await programarRecordatorioReserva(
-                        clienteNumero,
-                        phone_id,
-                        fecha,      // "20/01/2026"
-                        hora,       // "19:00:00"
-                        nombre,     // "Juan"
-                        personas,   // 4
-                        tipo        // "estandar" o "decoracion"
-                    );
+
+                    // 📅 Programar recordatorio 3h antes y feedback 24h después
+                    const reservaConfirmada = await db.getReserva(clienteNumber);
+                    if (reservaConfirmada && reservaConfirmada.fecha && reservaConfirmada.hora) {
+                        // Recordatorio 3 horas antes
+                        await programarRecordatorioReserva(
+                            clienteNumber,
+                            phone_id,
+                            reservaConfirmada.fecha,
+                            reservaConfirmada.hora,
+                            reservaConfirmada.nombre || datosPago.nombre,
+                            reservaConfirmada.personas,
+                            reservaConfirmada.tipo_reserva
+                        );
+
+                        // Feedback 24 horas después
+                        await programarFeedbackPostReserva(
+                            clienteNumber,
+                            phone_id,
+                            reservaConfirmada.fecha,
+                            reservaConfirmada.hora,
+                            reservaConfirmada.nombre || datosPago.nombre
+                        );
+
+                        console.log(`✅ Recordatorio y feedback programados`);
+                    }
+
                     // Confirmar al admin
                     await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
                         messaging_product: "whatsapp",
