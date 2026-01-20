@@ -985,6 +985,49 @@ app.post("/webhook", async (req, res) => {
 
         if (!sesionesActivas[from]) sesionesActivas[from] = [];
 
+        // ✨ RESTAURACIÓN DE CONTEXTO: Recuperar datos guardados desde la DB
+        // Esto previene que Vicentico pregunte el nombre repetidamente
+        const reservaGuardada = await db.getReserva(from);
+
+        // Si el historial está vacío PERO hay datos en DB, reconstruir el contexto
+        if (sesionesActivas[from].length === 0 && reservaGuardada && reservaGuardada.nombre) {
+            console.log(`🔄 RESTAURANDO CONTEXTO: El historial estaba vacío pero tenemos datos en DB`);
+            console.log(`   - Nombre guardado: "${reservaGuardada.nombre}"`);
+            console.log(`   - Tipo: ${reservaGuardada.tipo || 'No especificado'}`);
+            console.log(`   - Fecha: ${reservaGuardada.fecha || 'No especificada'}`);
+
+            // Inyectar mensajes simulados en el historial para que Gemini "recuerde"
+            sesionesActivas[from] = [
+                {
+                    role: "user",
+                    parts: [{ text: `Hola, me llamo ${reservaGuardada.nombre}` }]
+                },
+                {
+                    role: "model",
+                    parts: [{ text: `¡Bienvenido a Las Margaritas, Caballero ${reservaGuardada.nombre}! Es un gusto tenerte por acá. ¿En qué te puedo servir hoy?` }]
+                }
+            ];
+
+            // Si hay más datos, agregar al contexto
+            if (reservaGuardada.tipo || reservaGuardada.fecha || reservaGuardada.personas) {
+                const detallesAdicionales = [];
+                if (reservaGuardada.tipo) detallesAdicionales.push(`tipo de reserva: ${reservaGuardada.tipo}`);
+                if (reservaGuardada.fecha) detallesAdicionales.push(`fecha: ${reservaGuardada.fecha}`);
+                if (reservaGuardada.personas) detallesAdicionales.push(`${reservaGuardada.personas} personas`);
+
+                sesionesActivas[from].push({
+                    role: "user",
+                    parts: [{ text: `Ya te di estos datos: ${detallesAdicionales.join(', ')}` }]
+                });
+                sesionesActivas[from].push({
+                    role: "model",
+                    parts: [{ text: `Perfecto, ya tengo anotado todo eso.` }]
+                });
+            }
+
+            console.log(`✅ CONTEXTO RESTAURADO: Gemini ahora "recuerda" que el usuario se llama ${reservaGuardada.nombre}`);
+        }
+
         // Crear modelo con systemInstruction actualizada con fecha y hora actual
         const modeloConFecha = genAI.getGenerativeModel({
             model: "gemini-2.5-pro",
@@ -1233,58 +1276,62 @@ app.post("/webhook", async (req, res) => {
             const respuestaLower = respuestaFaraon.toLowerCase();
 
             // 1. Detectar y guardar NOMBRE (extraer de la respuesta de Gemini)
-            if (!sesionesActivas[from] || sesionesActivas[from].length < 3) {
-                // Es uno de los primeros mensajes - Gemini probablemente detectó el nombre
-                if (respuestaLower.includes('bienvenido') || respuestaLower.includes('caballero') || respuestaLower.includes('dama')) {
-                    console.log(`🔍 SINCRONIZACIÓN: Gemini detectó un nombre, extrayendo...`);
+            // 🔥 FIX: Removida la restricción "length < 3" para que SIEMPRE detecte el nombre
+            // cuando Gemini usa "Bienvenido/Caballero/Dama [Nombre]"
+            if (respuestaLower.includes('bienvenido') || respuestaLower.includes('bienvenida') ||
+                respuestaLower.includes('caballero') || respuestaLower.includes('dama')) {
 
-                    // PASO 1: Verificar si ya existe reserva EN_PROCESO
-                    const reservaExistente = await db.getReserva(from);
+                console.log(`🔍 SINCRONIZACIÓN: Gemini detectó un nombre, extrayendo...`);
 
-                    if (reservaExistente?.nombre) {
-                        console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
-                    } else {
-                        // PASO 2: Extraer nombre de la respuesta de Gemini
-                        let nombreExtraido = null;
+                // PASO 1: Verificar si ya existe reserva EN_PROCESO con nombre
+                const reservaExistente = await db.getReserva(from);
 
-                        // Patrón 1: "Bienvenido, [Nombre]" o "Bienvenida, [Nombre]"
-                        const patronBienvenido = /bienvenid[oa],?\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
-                        const matchBienvenido = respuestaFaraon.match(patronBienvenido);
+                if (reservaExistente?.nombre) {
+                    console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
+                } else {
+                    // PASO 2: Extraer nombre de la respuesta de Gemini
+                    let nombreExtraido = null;
 
-                        // Patrón 2: "Caballero [Nombre]" o "Dama [Nombre]"
-                        const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
-                        const matchCaballero = respuestaFaraon.match(patronCaballero);
+                    // Patrón 1: "Bienvenido/a [a] [Nombre]" o "Bienvenido/a, [Nombre]"
+                    const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                    const matchBienvenido = respuestaFaraon.match(patronBienvenido);
 
-                        // Patrón 3: Buscar en el mensaje del usuario (como último recurso)
-                        // Si el mensaje es solo un nombre (sin "hola", "buenos días", etc.)
-                        const mensajeUsuario = msg.text.body.trim();
-                        const esNombreDirecto = /^[A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?$/.test(mensajeUsuario);
+                    // Patrón 2: "Caballero [Nombre]" o "Dama [Nombre]"
+                    const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                    const matchCaballero = respuestaFaraon.match(patronCaballero);
 
-                        if (matchBienvenido) {
-                            nombreExtraido = matchBienvenido[1].trim();
-                        } else if (matchCaballero) {
-                            nombreExtraido = matchCaballero[1].trim();
-                        } else if (esNombreDirecto && mensajeUsuario.length >= 2 && mensajeUsuario.length <= 50) {
-                            // El usuario envió solo su nombre
-                            nombreExtraido = mensajeUsuario;
-                            console.log(`📝 Nombre extraído directamente del mensaje del usuario`);
-                        }
+                    // Patrón 3: Buscar en el mensaje del usuario (como último recurso)
+                    // Si el mensaje es solo un nombre (sin "hola", "buenos días", etc.)
+                    const mensajeUsuario = msg.text.body.trim();
+                    const esNombreDirecto = /^[A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?$/.test(mensajeUsuario);
 
-                        // PASO 3: Guardar solo si se extrajo un nombre válido
-                        if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre)/i.test(nombreExtraido)) {
-                            await db.createOrGetReserva(from);
-                            await db.updateReserva(from, { nombre: nombreExtraido });
+                    if (matchBienvenido) {
+                        nombreExtraido = matchBienvenido[1].trim();
+                        console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
+                    } else if (matchCaballero) {
+                        nombreExtraido = matchCaballero[1].trim();
+                        console.log(`📝 Nombre extraído del patrón "Caballero/Dama": "${nombreExtraido}"`);
+                    } else if (esNombreDirecto && mensajeUsuario.length >= 2 && mensajeUsuario.length <= 50) {
+                        // El usuario envió solo su nombre
+                        nombreExtraido = mensajeUsuario;
+                        console.log(`📝 Nombre extraído directamente del mensaje del usuario`);
+                    }
 
-                            // PASO 4: Verificar que se guardó
-                            const reservaActualizada = await db.getReserva(from);
-                            if (reservaActualizada?.nombre) {
-                                console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
-                            } else {
-                                console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
-                            }
+                    // PASO 3: Guardar solo si se extrajo un nombre válido
+                    if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre|margaritas|las)/i.test(nombreExtraido)) {
+                        await db.createOrGetReserva(from);
+                        await db.updateReserva(from, { nombre: nombreExtraido });
+
+                        // PASO 4: Verificar que se guardó
+                        const reservaActualizada = await db.getReserva(from);
+                        if (reservaActualizada?.nombre) {
+                            console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
+                            console.log(`🔄 El nombre ahora está en el historial de Gemini y en la DB`);
                         } else {
-                            console.log(`⚠️ No se pudo extraer un nombre válido. Mensaje: "${mensajeUsuario}"`);
+                            console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
                         }
+                    } else {
+                        console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta. Respuesta completa: "${respuestaFaraon.substring(0, 100)}..."`);
                     }
                 }
             }
