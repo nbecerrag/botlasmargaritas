@@ -390,44 +390,6 @@ async function enviarAudioWhatsApp(texto, to, phone_number_id) {
         }
     }
 }
-            });
-        });
-
-// ⏳ Esperar 500ms para asegurar que el archivo se libere
-await new Promise(resolve => setTimeout(resolve, 500));
-
-console.log("📤 Subiendo audio a WhatsApp...");
-
-// Enviar a WhatsApp
-const form = new FormData();
-form.append('file', fs.createReadStream(rutaAudio));
-form.append('type', 'audio/mpeg');
-form.append('messaging_product', 'whatsapp');
-
-const uploadRes = await axios.post(`https://graph.facebook.com/v17.0/${phone_number_id}/media`, form, {
-    headers: { ...form.getHeaders(), 'Authorization': `Bearer ${whatsappToken}` }
-});
-
-await axios.post(`https://graph.facebook.com/v17.0/${phone_number_id}/messages`, {
-    messaging_product: "whatsapp",
-    to: to,
-    type: "audio",
-    audio: { id: uploadRes.data.id }
-}, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
-
-console.log("✅ Audio enviado correctamente con ElevenLabs.");
-
-    } catch (error) {
-    console.error("❌ Error en proceso de audio:");
-    if (error.response) {
-        // Error de la API (ElevenLabs o WhatsApp)
-        console.error("Status:", error.response.status);
-        console.error("Data:", error.response.data);
-    } else {
-        console.error("Mensaje:", error.message);
-    }
-}
-}
 
 async function enviarMenuWhatsApp(menuId, to, phone_number_id) {
     try {
