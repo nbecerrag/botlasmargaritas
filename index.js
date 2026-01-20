@@ -59,6 +59,9 @@ const rechazosPendientes = {}; // Almacena rechazos esperando motivo: { [adminNu
 const mensajesProcesados = new Set();
 const TIEMPO_CACHE_MENSAJES = 5 * 60 * 1000; // 5 minutos
 
+// 🔒 LOCK DE PROCESAMIENTO: Evita procesar múltiples mensajes del mismo usuario simultáneamente
+const usuariosProcesando = new Set();
+
 // 2. EL MENÚ (Cerebro del Faraón)
 const DATOS_DEL_NEGOCIO = `
 NOMBRE DEL NEGOCIO: LAS MARGARITAS BY DIGITALBROS
@@ -800,6 +803,15 @@ app.post("/webhook", async (req, res) => {
         mensajesProcesados.add(msgId);
         setTimeout(() => mensajesProcesados.delete(msgId), TIEMPO_CACHE_MENSAJES);
 
+        // 🔒 LOCK: Verificar si ya estamos procesando un mensaje de este usuario
+        if (usuariosProcesando.has(from)) {
+            console.log(`⏳ Usuario ${from} ya tiene un mensaje en proceso. Esperando...`);
+            return;
+        }
+
+        // Marcar usuario como "procesando"
+        usuariosProcesando.add(from);
+
         // CANCELAR SEGUIMIENTOS PREVIOS (El cliente habló)
         cancelarSeguimiento(from);
 
@@ -1202,12 +1214,15 @@ app.post("/webhook", async (req, res) => {
             }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
         }
 
-        // PROGRAMAR NUEVOS SEGUIMIENTOS (Si NO estamos esperando pago, reprogramamos los cortos)
-        if (!timers[from]?.timer3) {
-            programarSeguimiento(from, phone_id);
-        }
+        programarSeguimiento(from, phone_id);
 
-    } catch (e) { console.error("🔥 Error crítico:", e.message); }
+    } catch (e) {
+        console.error("\ud83d\udd25 Error cr\u00edtico:", e.message);
+    } finally {
+        // \ud83d\udd13 Liberar lock del usuario (siempre, incluso si hubo error)
+        usuariosProcesando.delete(from);
+        console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
+    }
 });
 
 // --- ESTA ES LA PARTE QUE FALTA ---
