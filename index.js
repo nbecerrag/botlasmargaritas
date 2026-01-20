@@ -1302,9 +1302,11 @@ app.post("/webhook", async (req, res) => {
                     const matchBienvenido = respuestaFaraon.match(patronBienvenido);
 
                     // Patrón 3: Buscar en el mensaje del usuario (como último recurso)
-                    // Si el mensaje es solo un nombre (sin "hola", "buenos días", etc.)
+                    // Extraer cualquier nombre capitalizado del mensaje, incluso si tiene otras palabras
                     const mensajeUsuario = msg.text.body.trim();
-                    const esNombreDirecto = /^[A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?$/.test(mensajeUsuario);
+
+                    // Buscar un nombre capitalizado en el mensaje (ignorando palabras como "pos", "pues", "me llamo")
+                    const nombreEnMensaje = mensajeUsuario.match(/\b([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)\b/);
 
                     // ORDEN DE PRIORIDAD: Caballero/Dama > Bienvenido > Mensaje directo
                     if (matchCaballero) {
@@ -1313,203 +1315,205 @@ app.post("/webhook", async (req, res) => {
                     } else if (matchBienvenido) {
                         nombreExtraido = matchBienvenido[1].trim();
                         console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
-                    } else if (esNombreDirecto && mensajeUsuario.length >= 2 && mensajeUsuario.length <= 50) {
-                        // El usuario envió solo su nombre
-                        nombreExtraido = mensajeUsuario;
-                        console.log(`📝 Nombre extraído directamente del mensaje del usuario`);
-                    }
-
-                    // PASO 3: Guardar solo si se extrajo un nombre válido
-                    if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre|margaritas|las|mi|dama|caballero)$/i.test(nombreExtraido) && nombreExtraido.toLowerCase() !== 'mi estimado') {
-                        await db.createOrGetReserva(from);
-                        await db.updateReserva(from, { nombre: nombreExtraido });
-
-                        // PASO 4: Verificar que se guardó
-                        const reservaActualizada = await db.getReserva(from);
-                        if (reservaActualizada?.nombre) {
-                            console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
-                            console.log(`🔄 El nombre ahora está en el historial de Gemini y en la DB`);
-                        } else {
-                            console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
+                    } else if (nombreEnMensaje && nombreEnMensaje[1]) {
+                        // Verificar que el mensaje no sea solo un saludo
+                        const soloNombre = mensajeUsuario.toLowerCase().replace(/^(pos|pues|soy|me llamo|mi nombre es)\s+/i, '');
+                        if (soloNombre.length >= 2 && soloNombre.length <= 50) {
+                            nombreExtraido = nombreEnMensaje[1].trim();
+                            console.log(`📝 Nombre extraído directamente del mensaje del usuario: "${nombreExtraido}"`);
                         }
-                    } else {
-                        console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta.`);
-                        console.log(`   - Nombre extraído: "${nombreExtraido || 'ninguno'}"`);
-                        console.log(`   - Razón de rechazo: ${nombreExtraido ? `Filtro de exclusión (palabras genéricas)` : 'No se detectó ningún nombre'}`);
-                        console.log(`   - Respuesta completa: "${respuestaFaraon.substring(0, 100)}..."`);
+
+                        // PASO 3: Guardar solo si se extrajo un nombre válido
+                        if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre|margaritas|las|mi|dama|caballero)$/i.test(nombreExtraido) && nombreExtraido.toLowerCase() !== 'mi estimado') {
+                            await db.createOrGetReserva(from);
+                            await db.updateReserva(from, { nombre: nombreExtraido });
+
+                            // PASO 4: Verificar que se guardó
+                            const reservaActualizada = await db.getReserva(from);
+                            if (reservaActualizada?.nombre) {
+                                console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
+                                console.log(`🔄 El nombre ahora está en el historial de Gemini y en la DB`);
+                            } else {
+                                console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
+                            }
+                        } else {
+                            console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta.`);
+                            console.log(`   - Nombre extraído: "${nombreExtraido || 'ninguno'}"`);
+                            console.log(`   - Razón de rechazo: ${nombreExtraido ? `Filtro de exclusión (palabras genéricas)` : 'No se detectó ningún nombre'}`);
+                            console.log(`   - Respuesta completa: "${respuestaFaraon.substring(0, 100)}..."`);
+                        }
                     }
                 }
-            }
 
-            // 2. Detectar y guardar TIPO DE RESERVA (con verificación)
-            if (textoLower.includes('decoración') || textoLower.includes('decoracion') ||
-                textoLower.includes('decorada') || textoLower.includes('fiesta')) {
-                await db.updateReserva(from, { tipo: 'Decoración', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
-                const verificacion = await db.getReserva(from);
-                console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo})`);
-            } else if (textoLower.includes('estándar') || textoLower.includes('estandar') ||
-                textoLower.includes('consumible') || textoLower.includes('normal') ||
-                textoLower.includes('sin decoración') || textoLower.includes('sin decoracion')) {
-                await db.updateReserva(from, { tipo: 'Estándar', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
-                const verificacion = await db.getReserva(from);
-                console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo})`);
-            }
+                // 2. Detectar y guardar TIPO DE RESERVA (con verificación)
+                if (textoLower.includes('decoración') || textoLower.includes('decoracion') ||
+                    textoLower.includes('decorada') || textoLower.includes('fiesta')) {
+                    await db.updateReserva(from, { tipo: 'Decoración', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
+                    const verificacion = await db.getReserva(from);
+                    console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo})`);
+                } else if (textoLower.includes('estándar') || textoLower.includes('estandar') ||
+                    textoLower.includes('consumible') || textoLower.includes('normal') ||
+                    textoLower.includes('sin decoración') || textoLower.includes('sin decoracion')) {
+                    await db.updateReserva(from, { tipo: 'Estándar', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
+                    const verificacion = await db.getReserva(from);
+                    console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo})`);
+                }
 
-            // 3. Detectar y guardar NÚMERO DE PERSONAS
-            const personasMatch = msg.text.body.match(/\b(\d+)\s*(persona|people|pax)/i);
-            if (personasMatch) {
-                await db.updateReserva(from, { personas: parseInt(personasMatch[1]) });
-                console.log(`💾 Personas guardado en DB: ${personasMatch[1]}`);
-            } else if (/^\d+$/.test(msg.text.body.trim()) && respuestaLower.includes('hora')) {
-                // Si es solo un número y la respuesta pregunta por hora, probablemente es personas
-                await db.updateReserva(from, { personas: parseInt(msg.text.body.trim()) });
-                console.log(`💾 Personas guardado en DB: ${msg.text.body}`);
-            }
+                // 3. Detectar y guardar NÚMERO DE PERSONAS
+                const personasMatch = msg.text.body.match(/\b(\d+)\s*(persona|people|pax)/i);
+                if (personasMatch) {
+                    await db.updateReserva(from, { personas: parseInt(personasMatch[1]) });
+                    console.log(`💾 Personas guardado en DB: ${personasMatch[1]}`);
+                } else if (/^\d+$/.test(msg.text.body.trim()) && respuestaLower.includes('hora')) {
+                    // Si es solo un número y la respuesta pregunta por hora, probablemente es personas
+                    await db.updateReserva(from, { personas: parseInt(msg.text.body.trim()) });
+                    console.log(`💾 Personas guardado en DB: ${msg.text.body}`);
+                }
 
-            // 4. Detectar y guardar FECHA (varios formatos)
-            const fechaMatch = msg.text.body.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-            if (fechaMatch || textoLower.includes('mañana') || textoLower.includes('hoy') ||
-                textoLower.includes('viernes') || textoLower.includes('sábado') || textoLower.includes('domingo')) {
-                // Esperar a que Gemini calcule la fecha exacta y la incluya en la respuesta
-                const fechaRespuesta = respuestaFaraon.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/);
-                if (fechaRespuesta) {
-                    const [_, dia, mes, año] = fechaRespuesta;
-                    const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
-                    await db.updateReserva(from, { fecha: fechaISO });
-                    console.log(`💾 Fecha guardada en DB: ${fechaISO}`);
+                // 4. Detectar y guardar FECHA (varios formatos)
+                const fechaMatch = msg.text.body.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+                if (fechaMatch || textoLower.includes('mañana') || textoLower.includes('hoy') ||
+                    textoLower.includes('viernes') || textoLower.includes('sábado') || textoLower.includes('domingo')) {
+                    // Esperar a que Gemini calcule la fecha exacta y la incluya en la respuesta
+                    const fechaRespuesta = respuestaFaraon.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/);
+                    if (fechaRespuesta) {
+                        const [_, dia, mes, año] = fechaRespuesta;
+                        const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+                        await db.updateReserva(from, { fecha: fechaISO });
+                        console.log(`💾 Fecha guardada en DB: ${fechaISO}`);
+                    }
+                }
+
+                // 5. Detectar y guardar HORA
+                const horaMatch = msg.text.body.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|p\.m\.|a\.m\.)?/i);
+                if (horaMatch && (textoLower.includes('tarde') || textoLower.includes('noche') ||
+                    textoLower.includes('am') || textoLower.includes('pm') || /\d{1,2}:\d{2}/.test(msg.text.body))) {
+                    let hora = parseInt(horaMatch[1]);
+                    const minutos = horaMatch[2] || '00';
+                    const periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
+
+                    // Convertir a formato 24h si es PM
+                    if (periodo.includes('pm') && hora < 12) hora += 12;
+                    if (periodo.includes('am') && hora === 12) hora = 0;
+
+                    const horaFormato = `${hora.toString().padStart(2, '0')}:${minutos}:00`;
+                    await db.updateReserva(from, { hora: horaFormato });
+                    console.log(`💾 Hora guardada en DB: ${horaFormato}`);
                 }
             }
 
-            // 5. Detectar y guardar HORA
-            const horaMatch = msg.text.body.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|p\.m\.|a\.m\.)?/i);
-            if (horaMatch && (textoLower.includes('tarde') || textoLower.includes('noche') ||
-                textoLower.includes('am') || textoLower.includes('pm') || /\d{1,2}:\d{2}/.test(msg.text.body))) {
-                let hora = parseInt(horaMatch[1]);
-                const minutos = horaMatch[2] || '00';
-                const periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
+            sesionesActivas[from] = await chat.getHistory(); // Guardar memoria
 
-                // Convertir a formato 24h si es PM
-                if (periodo.includes('pm') && hora < 12) hora += 12;
-                if (periodo.includes('am') && hora === 12) hora = 0;
+            if (respuestaFaraon.includes("[VOZ]")) {
+                // Extracción de partes usando XML
+                const guionMatch = respuestaFaraon.match(/<guion_audio>([\s\S]*?)<\/guion_audio>/);
 
-                const horaFormato = `${hora.toString().padStart(2, '0')}:${minutos}:00`;
-                await db.updateReserva(from, { hora: horaFormato });
-                console.log(`💾 Hora guardada en DB: ${horaFormato}`);
-            }
-        }
+                // Si hay guion de audio, usamos ese. Si no, limpiamos la etiqueta [VOZ] del texto original.
+                let scriptAudio = guionMatch ? guionMatch[1].trim() : respuestaFaraon.replace("[VOZ]", "").trim();
 
-        sesionesActivas[from] = await chat.getHistory(); // Guardar memoria
-
-        if (respuestaFaraon.includes("[VOZ]")) {
-            // Extracción de partes usando XML
-            const guionMatch = respuestaFaraon.match(/<guion_audio>([\s\S]*?)<\/guion_audio>/);
-
-            // Si hay guion de audio, usamos ese. Si no, limpiamos la etiqueta [VOZ] del texto original.
-            let scriptAudio = guionMatch ? guionMatch[1].trim() : respuestaFaraon.replace("[VOZ]", "").trim();
-
-            // 1. Detección y Envío de Menús (Regex Robustas)
-            let menuEnviado = false;
-            // Detectar variaciones como [ MENÚ_MEX ] o [MENÚ MEX]
-            if (/\[\s*MENÚ_MEX\s*\]/i.test(respuestaFaraon) || /\[\s*MENU_MEX\s*\]/i.test(respuestaFaraon)) {
-                await enviarMenuWhatsApp(ID_CARTA_REST, from, phone_id);
-                await db.updateReserva(from, { ultimo_paso: 'viendo_menu' }); // 📊 Actualizar progreso
-                scriptAudio = scriptAudio.replace(/\[\s*MENÚ_MEX\s*\]/gi, "").replace(/\[\s*MENU_MEX\s*\]/gi, "");
-                menuEnviado = true;
-            }
-
-
-            // 2. Detección de UBICACIÓN
-            if (/\[\s*UBICACIÓN\s*\]/i.test(respuestaFaraon) || /\[\s*UBICACION\s*\]/i.test(respuestaFaraon)) {
-                await enviarUbicacion(from, phone_id);
-                await db.updateReserva(from, { ultimo_paso: 'viendo_ubicacion' }); // 📊 Actualizar progreso
-                scriptAudio = scriptAudio.replace(/\[\s*UBICACIÓN\s*\]/gi, "").replace(/\[\s*UBICACION\s*\]/gi, "");
-            }
-
-            // 3. Detección de DATOS DE PAGO (Mensaje Conversacional)
-            if (/\[\s*DATOS_PAGO\s*\]/i.test(respuestaFaraon) || /\[\s*DATOS PAGO\s*\]/i.test(respuestaFaraon)) {
-                await enviarImagenPago(from, phone_id);
-                await db.updateReserva(from, { ultimo_paso: 'esperando_pago' }); // 📊 Actualizar progreso
-
-                // Limpiar etiqueta del audio
-                scriptAudio = scriptAudio.replace(/\[\s*DATOS_PAGO\s*\]/gi, "").replace(/\[\s*DATOS PAGO\s*\]/gi, "");
-
-                // Mensaje conversacional en lugar de template
-                scriptAudio += "\n\nEn la imagen que te acabo de enviar están los datos para hacer el abono. Una vez lo hagas, me mandas el comprobante como IMAGEN y yo confirmo tu reserva al toque. 🎂✨";
-
-                programarSeguimientoPago(from, phone_id); // Iniciar timer 24h
-            }
-
-            // Limpieza final de seguridad para el audio (quitar etiquetas si quedaron)
-            scriptAudio = scriptAudio.replace(/<[^>]*>/g, '').trim();
-
-            // ⏱️ DECISIÓN: Voz o Texto (según tiempo entre mensajes Y estado del usuario)
-            const ahora = Date.now();
-            const ultimoMensaje = ultimoMensajeUsuario[from] || 0;
-            const tiempoTranscurrido = ahora - ultimoMensaje;
-
-            // Verificar si el usuario tiene nombre en la DB
-            const reservaActual = await db.getReserva(from);
-            const tieneNombre = reservaActual?.nombre && reservaActual.nombre.length > 0;
-
-            // PRIMER MENSAJE SIEMPRE AUDIO, o si no tiene nombre, o si pasó tiempo suficiente
-            const usarVoz = !tieneNombre || ultimoMensaje === 0 || tiempoTranscurrido > TIEMPO_ENTRE_MENSAJES_VOZ;
-
-            // Actualizar timestamp
-            ultimoMensajeUsuario[from] = ahora;
-
-            if (usarVoz) {
-                // PRIMER MENSAJE o HAN PASADO MÁS DE 30s: Enviar con VOZ
-                console.log("🎤 Enviando respuesta con AUDIO (primera o después de pausa)");
-                if (scriptAudio) {
-                    const audioFonetico = aplicarFonetica(scriptAudio);
-                    await enviarAudioWhatsApp(audioFonetico, from, phone_id);
+                // 1. Detección y Envío de Menús (Regex Robustas)
+                let menuEnviado = false;
+                // Detectar variaciones como [ MENÚ_MEX ] o [MENÚ MEX]
+                if (/\[\s*MENÚ_MEX\s*\]/i.test(respuestaFaraon) || /\[\s*MENU_MEX\s*\]/i.test(respuestaFaraon)) {
+                    await enviarMenuWhatsApp(ID_CARTA_REST, from, phone_id);
+                    await db.updateReserva(from, { ultimo_paso: 'viendo_menu' }); // 📊 Actualizar progreso
+                    scriptAudio = scriptAudio.replace(/\[\s*MENÚ_MEX\s*\]/gi, "").replace(/\[\s*MENU_MEX\s*\]/gi, "");
+                    menuEnviado = true;
                 }
-            } else {
-                // MENSAJE RÁPIDO CONSECUTIVO: Enviar como TEXTO
-                console.log("💬 Enviando respuesta como TEXTO (mensaje rápido consecutivo)");
-                if (scriptAudio) {
+
+
+                // 2. Detección de UBICACIÓN
+                if (/\[\s*UBICACIÓN\s*\]/i.test(respuestaFaraon) || /\[\s*UBICACION\s*\]/i.test(respuestaFaraon)) {
+                    await enviarUbicacion(from, phone_id);
+                    await db.updateReserva(from, { ultimo_paso: 'viendo_ubicacion' }); // 📊 Actualizar progreso
+                    scriptAudio = scriptAudio.replace(/\[\s*UBICACIÓN\s*\]/gi, "").replace(/\[\s*UBICACION\s*\]/gi, "");
+                }
+
+                // 3. Detección de DATOS DE PAGO (Mensaje Conversacional)
+                if (/\[\s*DATOS_PAGO\s*\]/i.test(respuestaFaraon) || /\[\s*DATOS PAGO\s*\]/i.test(respuestaFaraon)) {
+                    await enviarImagenPago(from, phone_id);
+                    await db.updateReserva(from, { ultimo_paso: 'esperando_pago' }); // 📊 Actualizar progreso
+
+                    // Limpiar etiqueta del audio
+                    scriptAudio = scriptAudio.replace(/\[\s*DATOS_PAGO\s*\]/gi, "").replace(/\[\s*DATOS PAGO\s*\]/gi, "");
+
+                    // Mensaje conversacional en lugar de template
+                    scriptAudio += "\n\nEn la imagen que te acabo de enviar están los datos para hacer el abono. Una vez lo hagas, me mandas el comprobante como IMAGEN y yo confirmo tu reserva al toque. 🎂✨";
+
+                    programarSeguimientoPago(from, phone_id); // Iniciar timer 24h
+                }
+
+                // Limpieza final de seguridad para el audio (quitar etiquetas si quedaron)
+                scriptAudio = scriptAudio.replace(/<[^>]*>/g, '').trim();
+
+                // ⏱️ DECISIÓN: Voz o Texto (según tiempo entre mensajes Y estado del usuario)
+                const ahora = Date.now();
+                const ultimoMensaje = ultimoMensajeUsuario[from] || 0;
+                const tiempoTranscurrido = ahora - ultimoMensaje;
+
+                // Verificar si el usuario tiene nombre en la DB
+                const reservaActual = await db.getReserva(from);
+                const tieneNombre = reservaActual?.nombre && reservaActual.nombre.length > 0;
+
+                // PRIMER MENSAJE SIEMPRE AUDIO, o si no tiene nombre, o si pasó tiempo suficiente
+                const usarVoz = !tieneNombre || ultimoMensaje === 0 || tiempoTranscurrido > TIEMPO_ENTRE_MENSAJES_VOZ;
+
+                // Actualizar timestamp
+                ultimoMensajeUsuario[from] = ahora;
+
+                if (usarVoz) {
+                    // PRIMER MENSAJE o HAN PASADO MÁS DE 30s: Enviar con VOZ
+                    console.log("🎤 Enviando respuesta con AUDIO (primera o después de pausa)");
+                    if (scriptAudio) {
+                        const audioFonetico = aplicarFonetica(scriptAudio);
+                        await enviarAudioWhatsApp(audioFonetico, from, phone_id);
+                    }
+                } else {
+                    // MENSAJE RÁPIDO CONSECUTIVO: Enviar como TEXTO
+                    console.log("💬 Enviando respuesta como TEXTO (mensaje rápido consecutivo)");
+                    if (scriptAudio) {
+                        await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+                            messaging_product: "whatsapp",
+                            to: from,
+                            text: { body: scriptAudio }
+                        }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+                    }
+                }
+
+                // EL GANCHO INMEDIATO (Texto post-audio si hubo menú)
+                if (menuEnviado) {
                     await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
-                        messaging_product: "whatsapp",
-                        to: from,
-                        text: { body: scriptAudio }
+                        messaging_product: "whatsapp", to: from, text: { body: "Mientras conoces nuestra carta... 🌮 ¿Te gustaría que te aparte un rincón especial cerca del ambiente mexicano? ¡No te pierdas nuestras noches de margaritas y buena música! ��" }
                     }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
                 }
-            }
 
-            // EL GANCHO INMEDIATO (Texto post-audio si hubo menú)
-            if (menuEnviado) {
+            } else {
+                // Respuesta Texto Normal (Listas largas, menús, o cuentas detalladas)
+                if (/\[\s*DATOS_PAGO\s*\]/i.test(respuestaFaraon) || /\[\s*DATOS PAGO\s*\]/i.test(respuestaFaraon)) {
+                    await enviarImagenPago(from, phone_id);
+                    programarSeguimientoPago(from, phone_id);
+                    respuestaFaraon = respuestaFaraon.replace(/\[\s*DATOS_PAGO\s*\]/gi, "").replace(/\[\s*DATOS PAGO\s*\]/gi, "");
+                }
+
                 await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
-                    messaging_product: "whatsapp", to: from, text: { body: "Mientras conoces nuestra carta... 🌮 ¿Te gustaría que te aparte un rincón especial cerca del ambiente mexicano? ¡No te pierdas nuestras noches de margaritas y buena música! ��" }
+                    messaging_product: "whatsapp", to: from, text: { body: respuestaFaraon }
                 }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
             }
 
-        } else {
-            // Respuesta Texto Normal (Listas largas, menús, o cuentas detalladas)
-            if (/\[\s*DATOS_PAGO\s*\]/i.test(respuestaFaraon) || /\[\s*DATOS PAGO\s*\]/i.test(respuestaFaraon)) {
-                await enviarImagenPago(from, phone_id);
-                programarSeguimientoPago(from, phone_id);
-                respuestaFaraon = respuestaFaraon.replace(/\[\s*DATOS_PAGO\s*\]/gi, "").replace(/\[\s*DATOS PAGO\s*\]/gi, "");
+            programarSeguimiento(from, phone_id);
+
+        } catch (e) {
+            console.error("\ud83d\udd25 Error cr\u00edtico:", e.message);
+        } finally {
+            // \ud83d\udd13 Liberar lock del usuario (siempre, incluso si hubo error)
+            // SAFETY: from puede no estar definido si el error ocurrió antes de su declaración
+            if (typeof from !== 'undefined' && from) {
+                usuariosProcesando.delete(from);
+
+                console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
             }
-
-            await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
-                messaging_product: "whatsapp", to: from, text: { body: respuestaFaraon }
-            }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
         }
-
-        programarSeguimiento(from, phone_id);
-
-    } catch (e) {
-        console.error("\ud83d\udd25 Error cr\u00edtico:", e.message);
-    } finally {
-        // \ud83d\udd13 Liberar lock del usuario (siempre, incluso si hubo error)
-        // SAFETY: from puede no estar definido si el error ocurrió antes de su declaración
-        if (typeof from !== 'undefined' && from) {
-            usuariosProcesando.delete(from);
-
-            console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
-        }
-    }
-});
+    });
 
 // --- ESTA ES LA PARTE QUE FALTA ---
 
