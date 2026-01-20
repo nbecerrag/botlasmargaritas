@@ -1292,25 +1292,27 @@ app.post("/webhook", async (req, res) => {
                     // PASO 2: Extraer nombre de la respuesta de Gemini
                     let nombreExtraido = null;
 
-                    // Patrón 1: "Bienvenido/a [a] [Nombre]" o "Bienvenido/a, [Nombre]"
-                    const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
-                    const matchBienvenido = respuestaFaraon.match(patronBienvenido);
-
-                    // Patrón 2: "Caballero [Nombre]" o "Dama [Nombre]"
+                    // Patrón 1 (PRIORIDAD): "Caballero [Nombre]" o "Dama [Nombre]"
+                    // Este se verifica PRIMERO porque es más específico
                     const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
                     const matchCaballero = respuestaFaraon.match(patronCaballero);
+
+                    // Patrón 2: "Bienvenido/a [a] [Nombre]" o "Bienvenido/a, [Nombre]"
+                    const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                    const matchBienvenido = respuestaFaraon.match(patronBienvenido);
 
                     // Patrón 3: Buscar en el mensaje del usuario (como último recurso)
                     // Si el mensaje es solo un nombre (sin "hola", "buenos días", etc.)
                     const mensajeUsuario = msg.text.body.trim();
                     const esNombreDirecto = /^[A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?$/.test(mensajeUsuario);
 
-                    if (matchBienvenido) {
-                        nombreExtraido = matchBienvenido[1].trim();
-                        console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
-                    } else if (matchCaballero) {
+                    // ORDEN DE PRIORIDAD: Caballero/Dama > Bienvenido > Mensaje directo
+                    if (matchCaballero) {
                         nombreExtraido = matchCaballero[1].trim();
                         console.log(`📝 Nombre extraído del patrón "Caballero/Dama": "${nombreExtraido}"`);
+                    } else if (matchBienvenido) {
+                        nombreExtraido = matchBienvenido[1].trim();
+                        console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
                     } else if (esNombreDirecto && mensajeUsuario.length >= 2 && mensajeUsuario.length <= 50) {
                         // El usuario envió solo su nombre
                         nombreExtraido = mensajeUsuario;
