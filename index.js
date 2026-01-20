@@ -678,26 +678,7 @@ async function enviarTicketReserva(to, phone_id, nombreCliente, fecha, hora, per
 
 // 5. GESTIÓN DE SEGUIMIENTOS (Follow-ups)
 
-/**
- * Generar mensaje de seguimiento personalizado según el progreso del usuario
- * @param {string} ultimo_paso - Último paso registrado del usuario
- * @returns {string} - Mensaje personalizado con tono Vicentico
- */
-function generarMensajeSeguimiento(ultimo_paso) {
-    const mensajes = {
-        'inicio': '¡Qué onda! ¿Se te ofrece algo más o ya te decidiste por los tacos? 🌮',
-
-        'viendo_menu': '¿Ya encontraste tus tacos favoritos en el menú, mi estimado? Si quieres una recomendación de la casa, nomás me chiflas. 🌵',
-
-        'viendo_ubicacion': '¿Ya checaste cómo llegar? Si tienes alguna duda del camino o quieres hacer tu reserva, aquí ando al pendiente. 📍',
-
-        'dando_datos': '¡Órale! Vi que estabas por apartar tu mesa. ¿Hubo alguna duda con la fecha o te ayudo a confirmar los detalles? 📅',
-
-        'esperando_pago': 'Disculpa que insista, compadre, pero aún no me ha llegado tu comprobante de pago. ¿Tuviste algún problema para hacer el abono? Te espero para confirmar tu reserva. 💳'
-    };
-
-    return mensajes[ultimo_paso] || mensajes['inicio'];
-}
+// ELIMINADO: Ya no usamos mensajes predeterminados - Gemini genera seguimientos contextuales
 
 function cancelarSeguimiento(to) {
     if (timers[to]) {
@@ -733,57 +714,56 @@ function programarSeguimientoPago(to, phone_id) {
 function programarSeguimiento(to, phone_id) {
     cancelarSeguimiento(to); // Limpiar previos
 
-    console.log(`⏳ Programando seguimientos contextuales para ${to}...`);
+    console.log(`⏳ Programando seguimiento contextual con Gemini para ${to}...`);
 
-    // Timer 1: 3 minutos
+    // Timer único: 5 minutos después del último mensaje
     const t1 = setTimeout(async () => {
         try {
-            console.log(`⏰ Ejecutando Follow-up 1 para ${to}`);
+            console.log(`⏰ Generando seguimiento contextual para ${to}`);
 
-            // Consultar progreso actual del usuario desde la DB
-            const reserva = await db.getReserva(to);
-            const ultimoPaso = reserva?.ultimo_paso || 'inicio';
-            const mensaje = generarMensajeSeguimiento(ultimoPaso);
+            // Obtener historial de conversación
+            const historial = sesionesActivas[to] || [];
 
-            console.log(`📊 Follow-up contexto: ultimo_paso="${ultimoPaso}"`);
-
-            await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
-                messaging_product: "whatsapp",
-                to: to,
-                text: { body: mensaje }
-            }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
-        } catch (e) { console.error("Error en Follow-up 1:", e.message); }
-    }, 3 * 60 * 1000); // 3 minutos
-
-    // Timer 2: 20 minutos
-    const t2 = setTimeout(async () => {
-        try {
-            console.log(`⏰ Ejecutando Follow-up 2 para ${to}`);
-
-            // Consultar progreso nuevamente por si cambió
-            const reserva = await db.getReserva(to);
-            const ultimoPaso = reserva?.ultimo_paso || 'inicio';
-
-            let mensajeFinal;
-            if (ultimoPaso === 'esperando_pago') {
-                mensajeFinal = '¡Ey! No quisiera que pierdas tu lugar. Las mesas para el fin de semana se van rapidito. ¿Me mandas el comprobante de pago para asegurarte tu mesa? 🌮✨';
-            } else {
-                mensajeFinal = '¡Órale! ¿Todavía por ahí? Si necesitas ayuda para reservar o tienes alguna pregunta, aquí sigo al tiro. Las mesas se van volando. 🚀';
+            if (!historial || historial.length === 0) {
+                console.log(`⚠️ No hay historial para ${to}, omitiendo seguimiento`);
+                return;
             }
 
-            console.log(`📊 Follow-up 2 contexto: ultimo_paso="${ultimoPaso}"`);
+            // Crear modelo temporal para generar seguimiento
+            const modeloSeguimiento = genAI.getGenerativeModel({
+                model: "gemini-2.5-pro",
+                systemInstruction: `Eres Vicentico de Las Margaritas. 
+                
+ANALIZA la conversación anterior y genera UN MENSAJE DE SEGUIMIENTO NATURAL que:
+                1. Sea breve (máximo 2 líneas)
+                2. Continúe naturalmente la conversación
+                3. Invite sutilmente a avanzar en la reserva o responder dudas
+                4. Use el tono alegre y mexicano de Vicentico
+                5. NO sea repetitivo con lo que ya dijiste
+                
+                IMPORTANTE: Responde SOLO el mensaje de seguimiento, sin etiquetas ni instrucciones.`
+            });
 
+            const chatSeguimiento = modeloSeguimiento.startChat({ history: historial });
+            const resultado = await chatSeguimiento.sendMessage("Genera un mensaje de seguimiento contextual basado en nuestra conversación.");
+            const mensajeSeguimiento = resultado.response.text().trim();
+
+            console.log(`💬 Seguimiento generado: "${mensajeSeguimiento.substring(0, 50)}..."`);
+
+            // Enviar como texto (no audio)
             await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
                 messaging_product: "whatsapp",
                 to: to,
-                text: { body: mensajeFinal }
+                text: { body: mensajeSeguimiento }
             }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
 
-            delete timers[to]; // Limpiar memoria al finalizar
-        } catch (e) { console.error("Error en Follow-up 2:", e.message); }
-    }, 20 * 60 * 1000); // 20 minutos
+            delete timers[to]; // Limpiar memoria
+        } catch (e) {
+            console.error("❌ Error en seguimiento contextual:", e.message);
+        }
+    }, 5 * 60 * 1000); // 5 minutos
 
-    timers[to] = { timer1: t1, timer2: t2 };
+    timers[to] = { timer1: t1 };
 }
 
 // 6. EL PROCESADOR PRINCIPAL (Webhook)
