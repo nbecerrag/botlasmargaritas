@@ -62,6 +62,10 @@ const TIEMPO_CACHE_MENSAJES = 5 * 60 * 1000; // 5 minutos
 // 🔒 LOCK DE PROCESAMIENTO: Evita procesar múltiples mensajes del mismo usuario simultáneamente
 const usuariosProcesando = new Set();
 
+// ⏱️ TRACKING DE TIEMPO: Para decidir si responder con voz o texto
+const ultimoMensajeUsuario = {}; // { [wa_id]: timestamp }
+const TIEMPO_ENTRE_MENSAJES_VOZ = 30 * 1000; // 30 segundos
+
 // 2. EL MENÚ (Cerebro del Faraón)
 const DATOS_DEL_NEGOCIO = `
 NOMBRE DEL NEGOCIO: LAS MARGARITAS BY DIGITALBROS
@@ -1177,21 +1181,49 @@ app.post("/webhook", async (req, res) => {
                 scriptAudio = scriptAudio.replace(/\[\s*UBICACIÓN\s*\]/gi, "").replace(/\[\s*UBICACION\s*\]/gi, "");
             }
 
-            // 3. Detección de DATOS DE PAGO
+            // 3. Detección de DATOS DE PAGO (Mensaje Conversacional)
             if (/\[\s*DATOS_PAGO\s*\]/i.test(respuestaFaraon) || /\[\s*DATOS PAGO\s*\]/i.test(respuestaFaraon)) {
                 await enviarImagenPago(from, phone_id);
                 await db.updateReserva(from, { ultimo_paso: 'esperando_pago' }); // 📊 Actualizar progreso
-                programarSeguimientoPago(from, phone_id); // Iniciar timer 24h
+
+                // Limpiar etiqueta del audio
                 scriptAudio = scriptAudio.replace(/\[\s*DATOS_PAGO\s*\]/gi, "").replace(/\[\s*DATOS PAGO\s*\]/gi, "");
+
+                // Mensaje conversacional en lugar de template
+                scriptAudio += "\n\nEn la imagen que te acabo de enviar están los datos para hacer el abono. Una vez lo hagas, me mandas el comprobante como IMAGEN y yo confirmo tu reserva al toque. 🎂✨";
+
+                programarSeguimientoPago(from, phone_id); // Iniciar timer 24h
             }
 
             // Limpieza final de seguridad para el audio (quitar etiquetas si quedaron)
             scriptAudio = scriptAudio.replace(/<[^>]*>/g, '').trim();
 
-            // SOLO ENVIAR AUDIO (User Request: Exclusividad + Fonética Aplicada)
-            if (scriptAudio) {
-                const audioFonetico = aplicarFonetica(scriptAudio);
-                await enviarAudioWhatsApp(audioFonetico, from, phone_id);
+            // ⏱️ DECISIÓN: Voz o Texto (según tiempo entre mensajes)
+            const ahora = Date.now();
+            const ultimoMensaje = ultimoMensajeUsuario[from] || 0;
+            const tiempoTranscurrido = ahora - ultimoMensaje;
+            const usarVoz = tiempoTranscurrido > TIEMPO_ENTRE_MENSAJES_VOZ || ultimoMensaje === 0;
+
+            // Actualizar timestamp
+            ultimoMensajeUsuario[from] = ahora;
+
+            if (usarVoz) {
+                // PRIMER MENSAJE o HAN PASADO MÁS DE 30s: Enviar con VOZ
+                console.log("🎤 Enviando respuesta con AUDIO (primera o después de pausa)");
+                if (scriptAudio) {
+                    const audioFonetico = aplicarFonetica(scriptAudio);
+                    await enviarAudioWhatsApp(audioFonetico, from, phone_id);
+                }
+            } else {
+                // MENSAJE RÁPIDO CONSECUTIVO: Enviar como TEXTO
+                console.log("💬 Enviando respuesta como TEXTO (mensaje rápido consecutivo)");
+                if (scriptAudio) {
+                    await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+                        messaging_product: "whatsapp",
+                        to: from,
+                        text: { body: scriptAudio }
+                    }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+                }
             }
 
             // EL GANCHO INMEDIATO (Texto post-audio si hubo menú)
