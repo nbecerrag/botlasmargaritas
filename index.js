@@ -1333,7 +1333,10 @@ app.post("/webhook", async (req, res) => {
                             console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
                         }
                     } else {
-                        console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta. Respuesta completa: "${respuestaFaraon.substring(0, 100)}..."`);
+                        console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta.`);
+                        console.log(`   - Nombre extraído: "${nombreExtraido || 'ninguno'}"`);
+                        console.log(`   - Razón de rechazo: ${nombreExtraido ? `Filtro de exclusión (palabras genéricas)` : 'No se detectó ningún nombre'}`);
+                        console.log(`   - Respuesta completa: "${respuestaFaraon.substring(0, 100)}..."`);
                     }
                 }
             }
