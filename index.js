@@ -1497,8 +1497,11 @@ app.post("/webhook", async (req, res) => {
         console.error("\ud83d\udd25 Error cr\u00edtico:", e.message);
     } finally {
         // \ud83d\udd13 Liberar lock del usuario (siempre, incluso si hubo error)
-        usuariosProcesando.delete(from);
+        // SAFETY: from puede no estar definido si el error ocurrió antes de su declaración
+        if (typeof from !== 'undefined' && from) {
+            usuariosProcesando.delete(from);
         console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
+        }
     }
 });
 
