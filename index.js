@@ -1245,7 +1245,6 @@ app.post("/webhook", async (req, res) => {
                         console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
                     } else {
                         // PASO 2: Extraer nombre de la respuesta de Gemini
-                        // Buscar patrones como "Bienvenido, Juan" o "Caballero Nicolás" o "Dama María"
                         let nombreExtraido = null;
 
                         // Patrón 1: "Bienvenido, [Nombre]" o "Bienvenida, [Nombre]"
@@ -1256,14 +1255,23 @@ app.post("/webhook", async (req, res) => {
                         const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
                         const matchCaballero = respuestaFaraon.match(patronCaballero);
 
+                        // Patrón 3: Buscar en el mensaje del usuario (como último recurso)
+                        // Si el mensaje es solo un nombre (sin "hola", "buenos días", etc.)
+                        const mensajeUsuario = msg.text.body.trim();
+                        const esNombreDirecto = /^[A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?$/.test(mensajeUsuario);
+
                         if (matchBienvenido) {
                             nombreExtraido = matchBienvenido[1].trim();
                         } else if (matchCaballero) {
                             nombreExtraido = matchCaballero[1].trim();
+                        } else if (esNombreDirecto && mensajeUsuario.length >= 2 && mensajeUsuario.length <= 50) {
+                            // El usuario envió solo su nombre
+                            nombreExtraido = mensajeUsuario;
+                            console.log(`📝 Nombre extraído directamente del mensaje del usuario`);
                         }
 
                         // PASO 3: Guardar solo si se extrajo un nombre válido
-                        if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey)/i.test(nombreExtraido)) {
+                        if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre)/i.test(nombreExtraido)) {
                             await db.createOrGetReserva(from);
                             await db.updateReserva(from, { nombre: nombreExtraido });
 
@@ -1275,7 +1283,7 @@ app.post("/webhook", async (req, res) => {
                                 console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
                             }
                         } else {
-                            console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta`);
+                            console.log(`⚠️ No se pudo extraer un nombre válido. Mensaje: "${mensajeUsuario}"`);
                         }
                     }
                 }
