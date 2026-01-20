@@ -81,6 +81,13 @@ MONEDA: Pesos Colombianos ($).
 - RESERVA ESTÁNDAR: $25.000 (Valor 100% consumible en el restaurante).
 - RESERVA CON DECORACIÓN: $40.000 (Costo del servicio de decoración temática mexicana, no consumible).
 
+📖 POLÍTICA DE RESERVAS (IMPORTANTE - EXPLICAR AL CLIENTE):
+- ✅ CAMBIOS: Permitidos hasta 24 horas antes sin cargo
+- ❌ DESPUÉS DE 24H: NO se permiten cambios ni cancelaciones
+- 💰 CANCELACIÓN: El abono NO es reembolsable en ningún caso
+- 🔄 REPROGRAMACIÓN: Solo si hay disponibilidad y con más de 24h de anticipación
+- ⚠️ El cliente debe confirmar que entiende la política antes de pagar
+
 ⏰ HORARIOS DE ATENCIÓN:
 - Martes a Jueves: 12:00 m. a 10:00 p.m.
 - Viernes y Sábado: 12:00 m. a 2:00 a.m. (¡Noches de Mariachi y Tequila!)
@@ -709,6 +716,65 @@ function programarSeguimientoPago(to, phone_id) {
     }, 24 * 60 * 60 * 1000); // 24 horas
 
     timers[to].timer3 = t3;
+}
+
+/**
+ * Programar recordatorio automático 3 horas antes de la reserva
+ * @param {string} to - Número de WhatsApp del cliente
+ * @param {string} phone_id - ID del teléfono de WhatsApp Business
+ * @param {string} fecha - Fecha de la reserva (dd/mm/yyyy)
+ * @param {string} hora - Hora de la reserva (HH:mm:ss)
+ * @param {string} nombre - Nombre del cliente
+ * @param {number} personas - Número de personas
+ * @param {string} tipo - Tipo de reserva
+ */
+async function programarRecordatorioReserva(to, phone_id, fecha, hora, nombre, personas, tipo) {
+    try {
+        console.log(`📅 Programando recordatorio para ${to}: ${fecha} ${hora}`);
+
+        // Parsear fecha y hora
+        const [dia, mes, anio] = fecha.split('/').map(Number);
+        const [horas, minutos] = hora.split(':').map(Number);
+
+        // Crear objeto Date con la fecha/hora de la reserva
+        const fechaReserva = new Date(anio, mes - 1, dia, horas, minutos);
+
+        // Calcular 3 horas antes
+        const fechaRecordatorio = new Date(fechaReserva.getTime() - (3 * 60 * 60 * 1000));
+
+        // Calcular cuánto tiempo falta hasta el recordatorio
+        const ahora = new Date();
+        const tiempoHastaRecordatorio = fechaRecordatorio.getTime() - ahora.getTime();
+
+        if (tiempoHastaRecordatorio <= 0) {
+            console.log(`⚠️ La reserva es muy pronto, no se puede programar recordatorio`);
+            return;
+        }
+
+        console.log(`⏰ Recordatorio programado para: ${fechaRecordatorio.toLocaleString('es-CO')}`);
+        console.log(`⏳ Tiempo hasta recordatorio: ${Math.round(tiempoHastaRecordatorio / 1000 / 60)} minutos`);
+
+        // Programar el recordatorio
+        setTimeout(async () => {
+            try {
+                console.log(`🔔 Enviando recordatorio a ${to}...`);
+
+                // Generar mensaje de recordatorio personalizado
+                const tipoTexto = tipo === 'decoracion' ? 'con decoración mexicana' : 'estándar';
+                const mensajeRecordatorio = `¡Qué onda, ${nombre}! Te recuerdo que hoy tienes tu reserva ${tipoTexto} para ${personas} ${personas === 1 ? 'persona' : 'personas'} a las ${hora.substring(0, 5)}. ¡Te esperamos con el comal caliente y las margaritas listas! 🌮🍹 Si surge algo, avísame de volada.`;
+
+                // Enviar como AUDIO
+                await enviarAudioWhatsApp(mensajeRecordatorio, to, phone_id);
+
+                console.log(`✅ Recordatorio enviado exitosamente a ${to}`);
+            } catch (error) {
+                console.error(`❌ Error enviando recordatorio a ${to}:`, error.message);
+            }
+        }, tiempoHastaRecordatorio);
+
+    } catch (error) {
+        console.error(`❌ Error programando recordatorio:`, error.message);
+    }
 }
 
 function programarSeguimiento(to, phone_id) {
