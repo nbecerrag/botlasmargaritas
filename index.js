@@ -61,6 +61,8 @@ const TIEMPO_CACHE_MENSAJES = 5 * 60 * 1000; // 5 minutos
 
 // 🔒 LOCK DE PROCESAMIENTO: Evita procesar múltiples mensajes del mismo usuario simultáneamente
 const usuariosProcesando = new Set();
+const lockTimestamps = new Map(); // Track when locks were acquired
+const LOCK_TIMEOUT = 30000; // 30 seconds - auto-release stuck locks
 
 // ⏱️ TRACKING DE TIEMPO: Para decidir si responder con voz o texto
 const ultimoMensajeUsuario = {}; // { [wa_id]: timestamp }
@@ -946,33 +948,39 @@ app.post("/webhook", async (req, res) => {
     console.log("📩 ¡ATENCIÓN! Llegó una notificación de Meta al Webhook.");
 
     res.sendStatus(200);
+
+    // 🔑 CRITICAL: Declare 'from' BEFORE try block so finally can access it
+    let from = null;
+
     try {
         const value = req.body.entry?.[0]?.changes?.[0]?.value;
         if (!value?.messages) return;
 
         const msg = value.messages[0];
-        const from = msg.from;
+        from = msg.from; // Assign early
         const phone_id = value.metadata.phone_number_id;
+        const msgId = msg.id;
 
         // 🔄 DEDUPLICACIÓN: Verificar si ya procesamos este mensaje
-        const msgId = msg.id;
         if (mensajesProcesados.has(msgId)) {
             console.log(`⏭️ Mensaje duplicado ignorado: ${msgId}`);
             return;
         }
 
-        // Agregar mensaje al caché y programar su eliminación
-        mensajesProcesados.add(msgId);
-        setTimeout(() => mensajesProcesados.delete(msgId), TIEMPO_CACHE_MENSAJES);
-
         // 🔒 LOCK: Verificar si ya estamos procesando un mensaje de este usuario
         if (usuariosProcesando.has(from)) {
-            console.log(`⏳ Usuario ${from} ya tiene un mensaje en proceso. Esperando...`);
-            return;
+            console.log(`⏳ Usuario ${from} ya tiene un mensaje en proceso. Rechazando mensaje duplicado.`);
+            return; // Exit WITHOUT adding to lock
         }
 
-        // Marcar usuario como "procesando"
+        // ✅ ACQUIRE LOCK - only if we'll actually process this message
         usuariosProcesando.add(from);
+        lockTimestamps.set(from, Date.now());
+        console.log(`🔒 Lock adquirido para ${from}`);
+
+        // Mark message as processed AFTER acquiring lock
+        mensajesProcesados.add(msgId);
+        setTimeout(() => mensajesProcesados.delete(msgId), TIEMPO_CACHE_MENSAJES);
 
         // CANCELAR SEGUIMIENTOS PREVIOS (El cliente habló)
         cancelarSeguimiento(from);
@@ -1508,8 +1516,9 @@ app.post("/webhook", async (req, res) => {
     } finally {
         // \ud83d\udd13 Liberar lock del usuario (siempre, incluso si hubo error)
         // SAFETY: from puede no estar definido si el error ocurrió antes de su declaración
-        if (typeof from !== 'undefined' && from) {
+        if (from && usuariosProcesando.has(from)) {
             usuariosProcesando.delete(from);
+            lockTimestamps.delete(from);
 
             console.log(`\u2705 Usuario ${from} liberado para nuevos mensajes`);
         }
@@ -1539,6 +1548,19 @@ const PORT = process.env.PORT || 10000;
 db.testConnection().then(connected => {
     if (connected) {
         app.listen(PORT, () => console.log(`🌮 Bot Las Margaritas listo en puerto ${PORT}.`));
+
+        // 🛡️ SAFETY: Periodic cleanup of stuck locks (every 10 seconds)
+        setInterval(() => {
+            const now = Date.now();
+            for (const [userId, timestamp] of lockTimestamps.entries()) {
+                if (now - timestamp > LOCK_TIMEOUT) {
+                    console.warn(`⚠️ TIMEOUT: Liberando lock atascado para ${userId} (lock time: ${((now - timestamp) / 1000).toFixed(1)}s)`);
+                    usuariosProcesando.delete(userId);
+                    lockTimestamps.delete(userId);
+                }
+            }
+        }, 10000); // Check every 10 seconds
+
     } else {
         console.error('❌ Error crítico: No se pudo conectar a la base de datos. El bot no iniciará.');
     }
