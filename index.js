@@ -1303,7 +1303,6 @@ app.post("/webhook", async (req, res) => {
                     let nombreExtraido = null;
 
                     // Patrón 1 (PRIORIDAD): "Caballero [Nombre]" o "Dama [Nombre]"
-                    // Este se verifica PRIMERO porque es más específico
                     const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
                     const matchCaballero = respuestaFaraon.match(patronCaballero);
 
@@ -1311,31 +1310,20 @@ app.post("/webhook", async (req, res) => {
                     const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
                     const matchBienvenido = respuestaFaraon.match(patronBienvenido);
 
-                    // Patrón 3: Buscar en el mensaje del usuario (como último recurso)
-                    // Extraer cualquier nombre capitalizado del mensaje, incluso si tiene otras palabras
-                    const mensajeUsuario = msg.text.body.trim();
-
-                    // Buscar un nombre capitalizado en el mensaje (ignorando palabras como "pos", "pues", "me llamo")
-                    const nombreEnMensaje = mensajeUsuario.match(/\b([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)\b/);
-
-                    // ORDEN DE PRIORIDAD: Caballero/Dama > Bienvenido > Mensaje directo
+                    // SOLO extraer de la respuesta de Gemini (más confiable)
                     if (matchCaballero) {
                         nombreExtraido = matchCaballero[1].trim();
                         console.log(`📝 Nombre extraído del patrón "Caballero/Dama": "${nombreExtraido}"`);
                     } else if (matchBienvenido) {
                         nombreExtraido = matchBienvenido[1].trim();
                         console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
-                    } else if (nombreEnMensaje && nombreEnMensaje[1]) {
-                        // Verificar que el mensaje no sea solo un saludo
-                        const soloNombre = mensajeUsuario.toLowerCase().replace(/^(pos|pues|soy|me llamo|mi nombre es)\s+/i, '');
-                        if (soloNombre.length >= 2 && soloNombre.length <= 50) {
-                            nombreExtraido = nombreEnMensaje[1].trim();
-                            console.log(`📝 Nombre extraído directamente del mensaje del usuario: "${nombreExtraido}"`);
-                        }
                     }
 
-                    // PASO 3: Guardar solo si se extrajo un nombre válido
-                    if (nombreExtraido && nombreExtraido.length > 1 && !/^(hola|hi|buenos|buenas|hey|estimado|compadre|margaritas|las|mi|dama|caballero)$/i.test(nombreExtraido) && nombreExtraido.toLowerCase() !== 'mi estimado') {
+                    // PASO 3: Guardar solo si se extrajo un nombre válido (filtro mejorado)
+                    // Rechazar saludos comunes: hola, buenos, buen, día, tarde, noche, etc.
+                    const palabrasExcluidas = /^(hola|hi|hey|buenos|buenas|buen|día|dia|tarde|noche|mañana|estimado|compadre|margaritas|las|mi|dama|caballero|señor|señora)$/i;
+
+                    if (nombreExtraido && nombreExtraido.length > 1 && !palabrasExcluidas.test(nombreExtraido)) {
                         await db.createOrGetReserva(from);
                         await db.updateReserva(from, { nombre: nombreExtraido });
 
