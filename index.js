@@ -1101,14 +1101,14 @@ app.post("/webhook", async (req, res) => {
                         console.log(`   - Fecha: ${reservaActiva.fecha || 'N/A'}`);
                         console.log(`   - Hora: ${reservaActiva.hora || 'N/A'}`);
                         console.log(`   - Personas: ${reservaActiva.personas || 'N/A'}`);
-                        console.log(`   - Tipo: ${reservaActiva.tipo || 'N/A'}`);
+                        console.log(`   - Tipo: ${reservaActiva.tipo_reserva || 'N/A'}`);
 
                         // Usar datos de Supabase, con fallback al resumen si falta algo
                         const nombreFinal = reservaActiva.nombre || datosPago.nombre || 'Cliente Distinguido';
                         const fechaFinal = reservaActiva.fecha || fecha;
                         const horaFinal = reservaActiva.hora || hora;
                         const personasFinal = reservaActiva.personas?.toString() || personas;
-                        const tipoFinal = reservaActiva.tipo || tipoReserva;
+                        const tipoFinal = reservaActiva.tipo_reserva || tipoReserva;
 
                         console.log(`🎫 Generando ticket con datos de DB (NO de memoria)...`);
 
@@ -1347,26 +1347,22 @@ app.post("/webhook", async (req, res) => {
             // 2. Detectar y guardar TIPO DE RESERVA (con verificación)
             if (textoLower.includes('decoración') || textoLower.includes('decoracion') ||
                 textoLower.includes('decorada') || textoLower.includes('fiesta')) {
-                await db.updateReserva(from, { tipo: 'Decoración', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
+                await db.updateReserva(from, { tipo_reserva: 'Decoración', ultimo_paso: 'dando_datos' });
                 const verificacion = await db.getReserva(from);
-                console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo})`);
+                console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo_reserva})`);
             } else if (textoLower.includes('estándar') || textoLower.includes('estandar') ||
                 textoLower.includes('consumible') || textoLower.includes('normal') ||
                 textoLower.includes('sin decoración') || textoLower.includes('sin decoracion')) {
-                await db.updateReserva(from, { tipo: 'Estándar', ultimo_paso: 'dando_datos' }); // 📊 Capturando datos
+                await db.updateReserva(from, { tipo_reserva: 'Estándar', ultimo_paso: 'dando_datos' });
                 const verificacion = await db.getReserva(from);
-                console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo})`);
+                console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo_reserva})`);
             }
 
-            // 3. Detectar y guardar NÚMERO DE PERSONAS
-            const personasMatch = msg.text.body.match(/\b(\d+)\s*(persona|people|pax)/i);
+            // 3. Detectar y guardar NÚMERO DE PERSONAS (mejorado)
+            const personasMatch = msg.text.body.match(/\b(\d+)\s*(persona|people|pax|comensales)/i);
             if (personasMatch) {
                 await db.updateReserva(from, { personas: parseInt(personasMatch[1]) });
                 console.log(`💾 Personas guardado en DB: ${personasMatch[1]}`);
-            } else if (/^\d+$/.test(msg.text.body.trim()) && respuestaLower.includes('hora')) {
-                // Si es solo un número y la respuesta pregunta por hora, probablemente es personas
-                await db.updateReserva(from, { personas: parseInt(msg.text.body.trim()) });
-                console.log(`💾 Personas guardado en DB: ${msg.text.body}`);
             }
 
             // 4. Detectar y guardar FECHA (varios formatos)
