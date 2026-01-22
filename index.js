@@ -481,7 +481,7 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
 
         // 3. Enviar Mensaje Interactivo al Admin con BOTONES
         console.log(`📤 Enviando mensaje con botones al admin: ${ADMIN_NUMBER}`);
-        await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+        const buttonResponse = await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
             messaging_product: "whatsapp",
             to: ADMIN_NUMBER,
             type: "interactive",
@@ -510,17 +510,19 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
                 }
             }
         }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
-        console.log(`✅ Mensaje con botones enviado`);
+        console.log(`✅ Mensaje con botones enviado - WhatsApp Message ID: ${buttonResponse.data.messages?.[0]?.id || 'N/A'}`);
+        console.log(`📊 WhatsApp Response:`, JSON.stringify(buttonResponse.data, null, 2));
 
         // 4. Reenviar Comprobante (Usando el Media ID original)
         console.log(`🖼️ Esperando 3.5s antes de reenviar imagen...`);
         await new Promise(resolve => setTimeout(resolve, 3500)); // Esperar propagación (Fix Error 400 - 3.5s delay)
 
         console.log(`📤 Reenviando imagen al admin. Media ID: ${mediaId}`);
-        await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+        const imageResponse = await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
             messaging_product: "whatsapp", to: ADMIN_NUMBER, type: "image", image: { id: mediaId }
         }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
-        console.log(`✅ Imagen reenviada al admin`);
+        console.log(`✅ Imagen reenviada al admin - WhatsApp Message ID: ${imageResponse.data.messages?.[0]?.id || 'N/A'}`);
+        console.log(`📊 WhatsApp Response:`, JSON.stringify(imageResponse.data, null, 2));
 
         console.log("✅ Notificación con botones enviada al Admin. Esperando confirmación...");
     } catch (e) {
