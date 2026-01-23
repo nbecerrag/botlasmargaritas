@@ -1061,10 +1061,22 @@ async function procesarYGuardarDatosConversacion(respuestaGemini, mensajeUsuario
     // 5. Detectar y guardar HORA (con conversión correcta de PM)
     const horaMatch = mensajeUsuario.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|p\.m\.|a\.m\.)?/i);
     if (horaMatch && (mensajeLower.includes('tarde') || mensajeLower.includes('noche') ||
+        mensajeLower.includes('mañana') || mensajeLower.includes('madrugada') ||
         mensajeLower.includes('am') || mensajeLower.includes('pm') || /\d{1,2}:\d{2}/.test(mensajeUsuario))) {
         let hora = parseInt(horaMatch[1]);
         const minutos = horaMatch[2] || '00';
-        const periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
+        let periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
+
+        // 🔥 FIX: Detectar palabras en español para AM/PM si no hay período explícito
+        if (!periodo) {
+            if (mensajeLower.includes('tarde')) {
+                periodo = 'pm';  // 1-6 de la tarde
+            } else if (mensajeLower.includes('noche')) {
+                periodo = 'pm';  // 7-11 de la noche
+            } else if (mensajeLower.includes('mañana') || mensajeLower.includes('madrugada')) {
+                periodo = 'am';  // Madrugada o mañana
+            }
+        }
 
         // 🔥 FIX: Convertir a formato 24h correctamente
         if (periodo.includes('pm')) {
@@ -1075,7 +1087,7 @@ async function procesarYGuardarDatosConversacion(respuestaGemini, mensajeUsuario
 
         const horaFormato = `${hora.toString().padStart(2, '0')}:${minutos}:00`;
         await db.updateReserva(waId, { hora: horaFormato });
-        console.log(`💾 Hora guardada en DB: ${horaFormato}`);
+        console.log(`💾 Hora guardada en DB: ${horaFormato} (periodo detectado: ${periodo || 'ninguno'})`);
     }
 }
 
