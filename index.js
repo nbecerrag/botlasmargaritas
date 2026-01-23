@@ -962,6 +962,123 @@ ANALIZA la conversación anterior y genera UN MENSAJE DE SEGUIMIENTO NATURAL que
     timers[to] = { timer1: t1 };
 }
 
+// 🔄 FUNCIÓN COMPARTIDA: Extraer y guardar datos de conversación
+// Esta función procesa TANTO mensajes de voz COMO mensajes de texto
+async function procesarYGuardarDatosConversacion(respuestaGemini, mensajeUsuario, waId) {
+    const respuestaLower = respuestaGemini.toLowerCase();
+    const mensajeLower = mensajeUsuario.toLowerCase();
+
+    // 1. Detectar y guardar NOMBRE (extraer de la respuesta de Gemini)
+    if (respuestaLower.includes('bienvenido') || respuestaLower.includes('bienvenida') ||
+        respuestaLower.includes('caballero') || respuestaLower.includes('dama')) {
+
+        console.log(`🔍 SINCRONIZACIÓN: Gemini detectó un nombre, extrayendo...`);
+
+        // PASO 1: Verificar si ya existe reserva EN_PROCESO con nombre
+        const reservaExistente = await db.getReserva(waId);
+
+        if (reservaExistente?.nombre) {
+            console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
+        } else {
+            // PASO 2: Extraer nombre de la respuesta de Gemini
+            let nombreExtraido = null;
+
+            // Patrón 1 (PRIORIDAD): "Caballero [Nombre]" o "Dama [Nombre]"
+            const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+            const matchCaballero = respuestaGemini.match(patronCaballero);
+
+            // Patrón 2: "Bienvenido/a [a] [Nombre]" o "Bienvenido/a, [Nombre]"
+            const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+            const matchBienvenido = respuestaGemini.match(patronBienvenido);
+
+            // SOLO extraer de la respuesta de Gemini (más confiable)
+            if (matchCaballero) {
+                nombreExtraido = matchCaballero[1].trim();
+                console.log(`📝 Nombre extraído del patrón "Caballero/Dama": "${nombreExtraido}"`);
+            } else if (matchBienvenido) {
+                nombreExtraido = matchBienvenido[1].trim();
+                console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
+            }
+
+            // PASO 3: Guardar solo si se extrajo un nombre válido (filtro mejorado)
+            const palabrasExcluidas = /^(hola|hi|hey|buenos|buenas|buen|día|dia|tarde|noche|mañana|estimado|compadre|margaritas|las|mi|dama|caballero|señor|señora)$/i;
+
+            if (nombreExtraido && nombreExtraido.length > 1 && !palabrasExcluidas.test(nombreExtraido)) {
+                await db.createOrGetReserva(waId);
+                await db.updateReserva(waId, { nombre: nombreExtraido });
+
+                // PASO 4: Verificar que se guardó
+                const reservaActualizada = await db.getReserva(waId);
+                if (reservaActualizada?.nombre) {
+                    console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
+                } else {
+                    console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
+                }
+            } else {
+                console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta.`);
+                console.log(`   - Nombre extraído: "${nombreExtraido || 'ninguno'}"`);
+            }
+        }
+    }
+
+    // 2. Detectar y guardar TIPO DE RESERVA
+    if (mensajeLower.includes('decoración') || mensajeLower.includes('decoracion') ||
+        mensajeLower.includes('decorada') || mensajeLower.includes('fiesta')) {
+        await db.updateReserva(waId, { tipo_reserva: 'Decoración', ultimo_paso: 'dando_datos' });
+        const verificacion = await db.getReserva(waId);
+        console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo_reserva})`);
+    } else if (mensajeLower.includes('estándar') || mensajeLower.includes('estandar') ||
+        mensajeLower.includes('consumible') || mensajeLower.includes('normal') ||
+        mensajeLower.includes('sin decoración') || mensajeLower.includes('sin decoracion')) {
+        await db.updateReserva(waId, { tipo_reserva: 'Estándar', ultimo_paso: 'dando_datos' });
+        const verificacion = await db.getReserva(waId);
+        console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo_reserva})`);
+    }
+
+    // 3. Detectar y guardar NÚMERO DE PERSONAS
+    // Intentar extraer también de la respuesta de Gemini si no está en el mensaje del usuario
+    const personasMatch = mensajeUsuario.match(/\b(\d+)\s*(persona|people|pax|comensales)/i) ||
+        respuestaGemini.match(/para\s+(\d+)\s*persona/i);
+    if (personasMatch) {
+        await db.updateReserva(waId, { personas: parseInt(personasMatch[1]) });
+        console.log(`💾 Personas guardado en DB: ${personasMatch[1]}`);
+    }
+
+    // 4. Detectar y guardar FECHA
+    const fechaMatch = mensajeUsuario.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+    if (fechaMatch || mensajeLower.includes('mañana') || mensajeLower.includes('hoy') ||
+        mensajeLower.includes('viernes') || mensajeLower.includes('sábado') || mensajeLower.includes('domingo')) {
+        // Esperar a que Gemini calcule la fecha exacta y la incluya en la respuesta
+        const fechaRespuesta = respuestaGemini.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/);
+        if (fechaRespuesta) {
+            const [_, dia, mes, año] = fechaRespuesta;
+            const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+            await db.updateReserva(waId, { fecha: fechaISO });
+            console.log(`💾 Fecha guardada en DB: ${fechaISO}`);
+        }
+    }
+
+    // 5. Detectar y guardar HORA (con conversión correcta de PM)
+    const horaMatch = mensajeUsuario.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|p\.m\.|a\.m\.)?/i);
+    if (horaMatch && (mensajeLower.includes('tarde') || mensajeLower.includes('noche') ||
+        mensajeLower.includes('am') || mensajeLower.includes('pm') || /\d{1,2}:\d{2}/.test(mensajeUsuario))) {
+        let hora = parseInt(horaMatch[1]);
+        const minutos = horaMatch[2] || '00';
+        const periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
+
+        // 🔥 FIX: Convertir a formato 24h correctamente
+        if (periodo.includes('pm')) {
+            if (hora !== 12) hora += 12;  // 1-11pm → 13-23, 12pm stays 12
+        } else if (periodo.includes('am') && hora === 12) {
+            hora = 0;  // 12am → 00:00
+        }
+
+        const horaFormato = `${hora.toString().padStart(2, '0')}:${minutos}:00`;
+        await db.updateReserva(waId, { hora: horaFormato });
+        console.log(`💾 Hora guardada en DB: ${horaFormato}`);
+    }
+}
+
 // 6. EL PROCESADOR PRINCIPAL (Webhook)
 app.post("/webhook", async (req, res) => {
     // 📢 ESTE LOG ES PARA SABER SI META ESTÁ LLEGANDO
