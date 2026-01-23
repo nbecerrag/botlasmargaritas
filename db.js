@@ -126,19 +126,36 @@ async function updateReserva(wa_id, data) {
 }
 
 /**
- * Obtener datos de la reserva ACTIVA (EN_PROCESO) de un cliente
+ * Obtener datos de la reserva ACTIVA de un cliente
  * @param {string} wa_id - ID de WhatsApp del cliente
+ * @param {string|null} estado - Estado específico a buscar (opcional). Si no se proporciona, busca EN_PROCESO o enviado
  * @returns {Promise<Object>} - Datos de la reserva activa
  */
-async function getReserva(wa_id) {
+async function getReserva(wa_id, estado = null) {
     try {
-        const query = `
-            SELECT * FROM reservas 
-            WHERE wa_id = $1 AND estado_pago = 'EN_PROCESO'
-            ORDER BY created_at DESC
-            LIMIT 1
-        `;
-        const result = await pool.query(query, [wa_id]);
+        let query, params;
+
+        if (estado) {
+            // Buscar por estado específico
+            query = `
+                SELECT * FROM reservas 
+                WHERE wa_id = $1 AND estado_pago = $2
+                ORDER BY created_at DESC
+                LIMIT 1
+            `;
+            params = [wa_id, estado];
+        } else {
+            // Buscar EN_PROCESO o enviado (pendiente de confirmación)
+            query = `
+                SELECT * FROM reservas 
+                WHERE wa_id = $1 AND estado_pago IN ('EN_PROCESO', 'enviado')
+                ORDER BY created_at DESC
+                LIMIT 1
+            `;
+            params = [wa_id];
+        }
+
+        const result = await pool.query(query, params);
         return result.rows[0] || null;
     } catch (error) {
         console.error('❌ Error en getReserva:', error.message);
