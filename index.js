@@ -467,7 +467,7 @@ async function notificarAdmin(from, phone_id, mediaId, nombreCliente) {
             systemInstruction: generarSystemInstruction()
         });
         const chatAdmin = modeloConFecha.startChat({ history: sesionesActivas[from] || [] });
-        const result = await chatAdmin.sendMessage("Extrae un resumen de la reserva en formato texto plano: Nombre, Fecha, Hora, Personas, Decoración, Cumpleaños. Sé breve.");
+        const result = await chatAdmin.sendMessage("Extrae un resumen de la reserva en formato texto plano: Nombre, Fecha, Hora, Personas, Tipo de reserva (Estándar o Decoración). Sé breve.");
         const resumen = result.response.text();
 
         console.log(`📝 Resumen generado: ${resumen.substring(0, 100)}...`);
@@ -591,9 +591,20 @@ async function generarTicketReserva(nombreCliente, fecha, hora, personas, tipo) 
         // 0. FUNCIÓN DE SANITIZACIÓN (eliminar caracteres internos del sistema)
         const sanitizar = (texto) => {
             if (!texto) return '';
-            // Eliminar guiones, guiones bajos, asteriscos al inicio/final
-            return texto.replace(/^[-_*\s]+|[-_*\s]+$/g, '').trim();
+            // 🔥 FIX: Corregido regex (era \s, debe ser \s para espacios)
+            // Eliminar guiones, guiones bajos, asteriscos, etiquetas XML al inicio/final
+            return texto
+                .replace(/<[^>]*>/g, '')  // Eliminar etiquetas XML/HTML
+                .replace(/^[-_*\s]+|[-_*\s]+$/g, '')  // Eliminar caracteres especiales al inicio/final
+                .trim();
         };
+
+        console.log(`🎫 GENERANDO TICKET - Datos recibidos:`);
+        console.log(`   - nombreCliente (RAW): "${nombreCliente}"`);
+        console.log(`   - fecha (RAW): "${fecha}"`);
+        console.log(`   - hora (RAW): "${hora}"`);
+        console.log(`   - personas (RAW): "${personas}"`);
+        console.log(`   - tipo (RAW): "${tipo}"`);
 
         // 1. Verificar que existe la plantilla
         if (!fs.existsSync(TICKET_CONFIG.plantillaPath)) {
@@ -625,13 +636,20 @@ async function generarTicketReserva(nombreCliente, fecha, hora, personas, tipo) 
 
         // 6. SANITIZAR Y PREPARAR DATOS
         // CRÍTICO: Fallback para nombre si está vacío/null/undefined
-        const nombreFinal = sanitizar(nombreCliente) || 'CLIENTE DISTINGUIDO';
+        const nombreSanitizado = sanitizar(nombreCliente);
+        const nombreFinal = nombreSanitizado || 'CLIENTE DISTINGUIDO';
         const fechaFinal = sanitizar(fecha) || 'Por confirmar';
         const horaFinal = sanitizar(hora) || 'Por confirmar';
-        const personasFinal = sanitizar(personas).replace(/[^\d]/g, '') || '1';
+        const personasFinal = sanitizar(personas?.toString() || '').replace(/[^\d]/g, '') || '1';
         const tipoFinal = sanitizar(tipo) || 'RESERVA ESTÁNDAR';
 
-        console.log(`🎨 Datos finales para ticket: Nombre="${nombreFinal}", Fecha="${fechaFinal}", Hora="${horaFinal}", Personas="${personasFinal}", Tipo="${tipoFinal}"`);
+        console.log(`🎨 Datos después de sanitizar:`);
+        console.log(`   - nombreSanitizado: "${nombreSanitizado}"`);
+        console.log(`   - nombreFinal (con fallback): "${nombreFinal}"`);
+        console.log(`   - fechaFinal: "${fechaFinal}"`);
+        console.log(`   - horaFinal: "${horaFinal}"`);
+        console.log(`   - personasFinal: "${personasFinal}"`);
+        console.log(`   - tipoFinal: "${tipoFinal}"`);
 
         // 7. Escribir NOMBRE (BOLD + MAYÚSCULAS + ROJO)
         const coordNombre = TICKET_CONFIG.coordenadas.nombre;
@@ -1095,44 +1113,66 @@ app.post("/webhook", async (req, res) => {
                     console.log(`🔍 SINCRONIZACIÓN: Consultando datos reales desde Supabase...`);
                     const reservaActiva = await db.getReserva(clienteNumber);
 
-                    if (reservaActiva) {
-                        console.log(`✅ Datos recuperados de Supabase:`);
-                        console.log(`   - Nombre: "${reservaActiva.nombre || 'NO DISPONIBLE'}"`);
-                        console.log(`   - Fecha: ${reservaActiva.fecha || 'N/A'}`);
-                        console.log(`   - Hora: ${reservaActiva.hora || 'N/A'}`);
-                        console.log(`   - Personas: ${reservaActiva.personas || 'N/A'}`);
-                        console.log(`   - Tipo: ${reservaActiva.tipo_reserva || 'N/A'}`);
+                    // ✅ VALIDACIÓN ESTRICTA: Verificar que existen datos en la DB
+                    if (!reservaActiva) {
+                        console.error(`❌ CRITICAL ERROR: No se encontró reserva EN_PROCESO en DB para ${clienteNumber}`);
 
-                        // Usar datos de Supabase, con fallback al resumen si falta algo
-                        const nombreFinal = reservaActiva.nombre || datosPago.nombre || 'Cliente Distinguido';
-                        const fechaFinal = reservaActiva.fecha || fecha;
-                        const horaFinal = reservaActiva.hora || hora;
-                        const personasFinal = reservaActiva.personas?.toString() || personas;
-                        const tipoFinal = reservaActiva.tipo_reserva || tipoReserva;
+                        // Notificar al admin del error
+                        await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+                            messaging_product: "whatsapp",
+                            to: ADMIN_NUMBER,
+                            text: { body: `⚠️ ERROR CRÍTICO: No se puede generar ticket para ${datosPago.nombre} (${clienteNumber}).\n\n❌ No existe reserva EN_PROCESO en la base de datos.\n\n👉 Por favor, verifica manualmente con el cliente o pídele que vuelva a hacer la reserva.` }
+                        }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
 
-                        console.log(`🎫 Generando ticket con datos de DB (NO de memoria)...`);
-
-                        await enviarTicketReserva(
-                            clienteNumber,
-                            datosPago.phone_id,
-                            nombreFinal,
-                            fechaFinal,
-                            horaFinal,
-                            personasFinal,
-                            tipoFinal
-                        );
-                    } else {
-                        console.warn(`⚠️ No se encontró reserva EN_PROCESO en DB, usando datos del resumen`);
-                        await enviarTicketReserva(
-                            clienteNumber,
-                            datosPago.phone_id,
-                            datosPago.nombre,
-                            fecha,
-                            hora,
-                            personas,
-                            tipoReserva
-                        );
+                        return;
                     }
+
+                    // ✅ VALIDACIÓN ESTRICTA: Verificar que todos los campos críticos existen
+                    const camposFaltantes = [];
+                    if (!reservaActiva.nombre) camposFaltantes.push('Nombre');
+                    if (!reservaActiva.fecha) camposFaltantes.push('Fecha');
+                    if (!reservaActiva.hora) camposFaltantes.push('Hora');
+                    if (!reservaActiva.personas) camposFaltantes.push('Personas');
+                    if (!reservaActiva.tipo_reserva) camposFaltantes.push('Tipo de reserva');
+
+                    if (camposFaltantes.length > 0) {
+                        console.error(`❌ CRITICAL ERROR: Datos incompletos en DB para ${clienteNumber}`);
+                        console.error(`   Campos faltantes: ${camposFaltantes.join(', ')}`);
+                        console.error(`   Datos en DB:`, {
+                            nombre: reservaActiva.nombre || 'NULL',
+                            fecha: reservaActiva.fecha || 'NULL',
+                            hora: reservaActiva.hora || 'NULL',
+                            personas: reservaActiva.personas || 'NULL',
+                            tipo_reserva: reservaActiva.tipo_reserva || 'NULL'
+                        });
+
+                        // Notificar al admin con detalles específicos
+                        await axios.post(`https://graph.facebook.com/v17.0/${phone_id}/messages`, {
+                            messaging_product: "whatsapp",
+                            to: ADMIN_NUMBER,
+                            text: { body: `⚠️ ERROR: No se puede generar ticket para ${datosPago.nombre || 'cliente'} (${clienteNumber}).\n\n❌ Datos incompletos en base de datos:\n${camposFaltantes.map(c => `- ${c}`).join('\n')}\n\n👉 Verifica manualmente con el cliente o pídele que confirme estos datos.` }
+                        }, { headers: { 'Authorization': `Bearer ${whatsappToken}` } });
+
+                        return;
+                    }
+
+                    // 🎫 GENERAR TICKET: Solo si TODOS los datos están completos
+                    console.log(`✅ Datos completos en DB. Generando ticket...`);
+                    console.log(`   - Nombre: "${reservaActiva.nombre}"`);
+                    console.log(`   - Fecha: ${reservaActiva.fecha}`);
+                    console.log(`   - Hora: ${reservaActiva.hora}`);
+                    console.log(`   - Personas: ${reservaActiva.personas}`);
+                    console.log(`   - Tipo: ${reservaActiva.tipo_reserva}`);
+
+                    await enviarTicketReserva(
+                        clienteNumber,
+                        datosPago.phone_id,
+                        reservaActiva.nombre,              // Sin fallback
+                        reservaActiva.fecha,               // Sin fallback
+                        reservaActiva.hora,                // Sin fallback
+                        reservaActiva.personas.toString(), // Sin fallback
+                        reservaActiva.tipo_reserva         // Sin fallback
+                    );
 
                     // 📅 Programar recordatorio 3h antes y feedback 24h después
                     const reservaConfirmada = await db.getReserva(clienteNumber);
@@ -1262,17 +1302,153 @@ app.post("/webhook", async (req, res) => {
             console.log(`⏳ Pago recibido de ${from}. Esperando confirmación del admin...`);
             return;
 
+
+            // 🔄 FUNCIÓN COMPARTIDA: Extraer y guardar datos de conversación
+            // Esta función procesa TANTO mensajes de voz COMO mensajes de texto
+            async function procesarYGuardarDatosConversacion(respuestaGemini, mensajeUsuario, waId) {
+                const respuestaLower = respuestaGemini.toLowerCase();
+                const mensajeLower = mensajeUsuario.toLowerCase();
+
+                // 1. Detectar y guardar NOMBRE (extraer de la respuesta de Gemini)
+                if (respuestaLower.includes('bienvenido') || respuestaLower.includes('bienvenida') ||
+                    respuestaLower.includes('caballero') || respuestaLower.includes('dama')) {
+
+                    console.log(`🔍 SINCRONIZACIÓN: Gemini detectó un nombre, extrayendo...`);
+
+                    // PASO 1: Verificar si ya existe reserva EN_PROCESO con nombre
+                    const reservaExistente = await db.getReserva(waId);
+
+                    if (reservaExistente?.nombre) {
+                        console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
+                    } else {
+                        // PASO 2: Extraer nombre de la respuesta de Gemini
+                        let nombreExtraido = null;
+
+                        // Patrón 1 (PRIORIDAD): "Caballero [Nombre]" o "Dama [Nombre]"
+                        const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                        const matchCaballero = respuestaGemini.match(patronCaballero);
+
+                        // Patrón 2: "Bienvenido/a [a] [Nombre]" o "Bienvenido/a, [Nombre]"
+                        const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
+                        const matchBienvenido = respuestaGemini.match(patronBienvenido);
+
+                        // SOLO extraer de la respuesta de Gemini (más confiable)
+                        if (matchCaballero) {
+                            nombreExtraido = matchCaballero[1].trim();
+                            console.log(`📝 Nombre extraído del patrón "Caballero/Dama": "${nombreExtraido}"`);
+                        } else if (matchBienvenido) {
+                            nombreExtraido = matchBienvenido[1].trim();
+                            console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
+                        }
+
+                        // PASO 3: Guardar solo si se extrajo un nombre válido (filtro mejorado)
+                        const palabrasExcluidas = /^(hola|hi|hey|buenos|buenas|buen|día|dia|tarde|noche|mañana|estimado|compadre|margaritas|las|mi|dama|caballero|señor|señora)$/i;
+
+                        if (nombreExtraido && nombreExtraido.length > 1 && !palabrasExcluidas.test(nombreExtraido)) {
+                            await db.createOrGetReserva(waId);
+                            await db.updateReserva(waId, { nombre: nombreExtraido });
+
+                            // PASO 4: Verificar que se guardó
+                            const reservaActualizada = await db.getReserva(waId);
+                            if (reservaActualizada?.nombre) {
+                                console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
+                            } else {
+                                console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
+                            }
+                        } else {
+                            console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta.`);
+                            console.log(`   - Nombre extraído: "${nombreExtraido || 'ninguno'}"`);
+                        }
+                    }
+                }
+
+                // 2. Detectar y guardar TIPO DE RESERVA
+                if (mensajeLower.includes('decoración') || mensajeLower.includes('decoracion') ||
+                    mensajeLower.includes('decorada') || mensajeLower.includes('fiesta')) {
+                    await db.updateReserva(waId, { tipo_reserva: 'Decoración', ultimo_paso: 'dando_datos' });
+                    const verificacion = await db.getReserva(waId);
+                    console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo_reserva})`);
+                } else if (mensajeLower.includes('estándar') || mensajeLower.includes('estandar') ||
+                    mensajeLower.includes('consumible') || mensajeLower.includes('normal') ||
+                    mensajeLower.includes('sin decoración') || mensajeLower.includes('sin decoracion')) {
+                    await db.updateReserva(waId, { tipo_reserva: 'Estándar', ultimo_paso: 'dando_datos' });
+                    const verificacion = await db.getReserva(waId);
+                    console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo_reserva})`);
+                }
+
+                // 3. Detectar y guardar NÚMERO DE PERSONAS
+                // Intentar extraer también de la respuesta de Gemini si no está en el mensaje del usuario
+                const personasMatch = mensajeUsuario.match(/\b(\d+)\s*(persona|people|pax|comensales)/i) ||
+                    respuestaGemini.match(/para\s+(\d+)\s*persona/i);
+                if (personasMatch) {
+                    await db.updateReserva(waId, { personas: parseInt(personasMatch[1]) });
+                    console.log(`💾 Personas guardado en DB: ${personasMatch[1]}`);
+                }
+
+                // 4. Detectar y guardar FECHA
+                const fechaMatch = mensajeUsuario.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+                if (fechaMatch || mensajeLower.includes('mañana') || mensajeLower.includes('hoy') ||
+                    mensajeLower.includes('viernes') || mensajeLower.includes('sábado') || mensajeLower.includes('domingo')) {
+                    // Esperar a que Gemini calcule la fecha exacta y la incluya en la respuesta
+                    const fechaRespuesta = respuestaGemini.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/);
+                    if (fechaRespuesta) {
+                        const [_, dia, mes, año] = fechaRespuesta;
+                        const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+                        await db.updateReserva(waId, { fecha: fechaISO });
+                        console.log(`💾 Fecha guardada en DB: ${fechaISO}`);
+                    }
+                }
+
+                // 5. Detectar y guardar HORA (con conversión correcta de PM)
+                const horaMatch = mensajeUsuario.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|p\.m\.|a\.m\.)?/i);
+                if (horaMatch && (mensajeLower.includes('tarde') || mensajeLower.includes('noche') ||
+                    mensajeLower.includes('am') || mensajeLower.includes('pm') || /\d{1,2}:\d{2}/.test(mensajeUsuario))) {
+                    let hora = parseInt(horaMatch[1]);
+                    const minutos = horaMatch[2] || '00';
+                    const periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
+
+                    // 🔥 FIX: Convertir a formato 24h correctamente
+                    if (periodo.includes('pm')) {
+                        if (hora !== 12) hora += 12;  // 1-11pm → 13-23, 12pm stays 12
+                    } else if (periodo.includes('am') && hora === 12) {
+                        hora = 0;  // 12am → 00:00
+                    }
+
+                    const horaFormato = `${hora.toString().padStart(2, '0')}:${minutos}:00`;
+                    await db.updateReserva(waId, { hora: horaFormato });
+                    console.log(`💾 Hora guardada en DB: ${horaFormato}`);
+                }
+            }
+
+
         } else if (msg.type === "audio") {
             const rutaValida = await descargarAudio(msg.audio.id);
             if (!rutaValida) { // ✅ Si falla la descarga, no intentamos subir a Google
                 respuestaFaraon = "Mis oídos reales fallaron. ¿Podrías repetirlo o escribirme? [VOZ]";
             } else {
+                // 💾 Asegurar que existe una reserva EN_PROCESO
+                await db.createOrGetReserva(from);
+
                 const upload = await fileManager.uploadFile(rutaValida, { mimeType: "audio/ogg", displayName: "audio" });
                 const result = await chat.sendMessage([
-                    { text: "Responde a este audio usando los datos de KEOPS:" },
+                    { text: "Responde a este audio usando los datos de KEOPS. IMPORTANTE: Al final de tu respuesta, incluye una etiqueta <transcripcion>texto que dijo el usuario</transcripcion> con lo que escuchaste." },
                     { fileData: { mimeType: upload.file.mimeType, fileUri: upload.file.uri } }
                 ]);
                 respuestaFaraon = result.response.text();
+
+                // 🔥 FIX CRÍTICO: Extraer transcripción para poder guardar datos
+                const transcripcionMatch = respuestaFaraon.match(/<transcripcion>([\s\S]*?)<\/transcripcion>/i);
+                const transcripcion = transcripcionMatch ? transcripcionMatch[1].trim() : '';
+
+                console.log(`📝 Transcripción extraída del audio: "${transcripcion.substring(0, 100)}..."`);
+
+                // 🔥 Procesar y guardar datos de la nota de voz
+                if (transcripcion) {
+                    await procesarYGuardarDatosConversacion(respuestaFaraon, transcripcion, from);
+                } else {
+                    console.warn(`⚠️ No se pudo extraer transcripción, intentando guardar con la respuesta de Gemini`);
+                    await procesarYGuardarDatosConversacion(respuestaFaraon, respuestaFaraon, from);
+                }
             }
         } else if (msg.type === "text") {
             // 💾 PERSISTENCIA: Asegurar que existe una reserva EN_PROCESO antes de procesar el mensaje
@@ -1281,120 +1457,8 @@ app.post("/webhook", async (req, res) => {
             const result = await chat.sendMessage(msg.text.body);
             respuestaFaraon = result.response.text();
 
-            // 🔄 PERSISTENCIA EN TIEMPO REAL: Sincronización con Supabase
-            const textoLower = msg.text.body.toLowerCase();
-            const respuestaLower = respuestaFaraon.toLowerCase();
-
-            // 1. Detectar y guardar NOMBRE (extraer de la respuesta de Gemini)
-            // 🔥 FIX: Removida la restricción "length < 3" para que SIEMPRE detecte el nombre
-            // cuando Gemini usa "Bienvenido/Caballero/Dama [Nombre]"
-            if (respuestaLower.includes('bienvenido') || respuestaLower.includes('bienvenida') ||
-                respuestaLower.includes('caballero') || respuestaLower.includes('dama')) {
-
-                console.log(`🔍 SINCRONIZACIÓN: Gemini detectó un nombre, extrayendo...`);
-
-                // PASO 1: Verificar si ya existe reserva EN_PROCESO con nombre
-                const reservaExistente = await db.getReserva(from);
-
-                if (reservaExistente?.nombre) {
-                    console.log(`📋 Nombre ya guardado: "${reservaExistente.nombre}" - saltando captura`);
-                } else {
-                    // PASO 2: Extraer nombre de la respuesta de Gemini
-                    let nombreExtraido = null;
-
-                    // Patrón 1 (PRIORIDAD): "Caballero [Nombre]" o "Dama [Nombre]"
-                    const patronCaballero = /(?:caballero|dama)\s+([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
-                    const matchCaballero = respuestaFaraon.match(patronCaballero);
-
-                    // Patrón 2: "Bienvenido/a [a] [Nombre]" o "Bienvenido/a, [Nombre]"
-                    const patronBienvenido = /bienvenid[oa](?:\s+a)?[,\s]+(?:caballero|dama)?\\s*([A-ZÁ-ÚÑ][a-zá-úñ]+(?:\s+[A-ZÁ-ÚÑ][a-zá-úñ]+)?)/i;
-                    const matchBienvenido = respuestaFaraon.match(patronBienvenido);
-
-                    // SOLO extraer de la respuesta de Gemini (más confiable)
-                    if (matchCaballero) {
-                        nombreExtraido = matchCaballero[1].trim();
-                        console.log(`📝 Nombre extraído del patrón "Caballero/Dama": "${nombreExtraido}"`);
-                    } else if (matchBienvenido) {
-                        nombreExtraido = matchBienvenido[1].trim();
-                        console.log(`📝 Nombre extraído del patrón "Bienvenido": "${nombreExtraido}"`);
-                    }
-
-                    // PASO 3: Guardar solo si se extrajo un nombre válido (filtro mejorado)
-                    // Rechazar saludos comunes: hola, buenos, buen, día, tarde, noche, etc.
-                    const palabrasExcluidas = /^(hola|hi|hey|buenos|buenas|buen|día|dia|tarde|noche|mañana|estimado|compadre|margaritas|las|mi|dama|caballero|señor|señora)$/i;
-
-                    if (nombreExtraido && nombreExtraido.length > 1 && !palabrasExcluidas.test(nombreExtraido)) {
-                        await db.createOrGetReserva(from);
-                        await db.updateReserva(from, { nombre: nombreExtraido });
-
-                        // PASO 4: Verificar que se guardó
-                        const reservaActualizada = await db.getReserva(from);
-                        if (reservaActualizada?.nombre) {
-                            console.log(`✅ NOMBRE GUARDADO en DB: "${reservaActualizada.nombre}"`);
-                            console.log(`🔄 El nombre ahora está en el historial de Gemini y en la DB`);
-                        } else {
-                            console.error(`❌ ERROR: El nombre NO se guardó correctamente`);
-                        }
-                    } else {
-                        console.log(`⚠️ No se pudo extraer un nombre válido de la respuesta.`);
-                        console.log(`   - Nombre extraído: "${nombreExtraido || 'ninguno'}"`);
-                        console.log(`   - Razón de rechazo: ${nombreExtraido ? `Filtro de exclusión (palabras genéricas)` : 'No se detectó ningún nombre'}`);
-                        console.log(`   - Respuesta completa: "${respuestaFaraon.substring(0, 100)}..."`);
-                    }
-                }
-            }
-
-            // 2. Detectar y guardar TIPO DE RESERVA (con verificación)
-            if (textoLower.includes('decoración') || textoLower.includes('decoracion') ||
-                textoLower.includes('decorada') || textoLower.includes('fiesta')) {
-                await db.updateReserva(from, { tipo_reserva: 'Decoración', ultimo_paso: 'dando_datos' });
-                const verificacion = await db.getReserva(from);
-                console.log(`💾 Tipo guardado en DB: Decoración (Verificado: ${verificacion?.tipo_reserva})`);
-            } else if (textoLower.includes('estándar') || textoLower.includes('estandar') ||
-                textoLower.includes('consumible') || textoLower.includes('normal') ||
-                textoLower.includes('sin decoración') || textoLower.includes('sin decoracion')) {
-                await db.updateReserva(from, { tipo_reserva: 'Estándar', ultimo_paso: 'dando_datos' });
-                const verificacion = await db.getReserva(from);
-                console.log(`💾 Tipo guardado en DB: Estándar (Verificado: ${verificacion?.tipo_reserva})`);
-            }
-
-            // 3. Detectar y guardar NÚMERO DE PERSONAS (mejorado)
-            const personasMatch = msg.text.body.match(/\b(\d+)\s*(persona|people|pax|comensales)/i);
-            if (personasMatch) {
-                await db.updateReserva(from, { personas: parseInt(personasMatch[1]) });
-                console.log(`💾 Personas guardado en DB: ${personasMatch[1]}`);
-            }
-
-            // 4. Detectar y guardar FECHA (varios formatos)
-            const fechaMatch = msg.text.body.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-            if (fechaMatch || textoLower.includes('mañana') || textoLower.includes('hoy') ||
-                textoLower.includes('viernes') || textoLower.includes('sábado') || textoLower.includes('domingo')) {
-                // Esperar a que Gemini calcule la fecha exacta y la incluya en la respuesta
-                const fechaRespuesta = respuestaFaraon.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/);
-                if (fechaRespuesta) {
-                    const [_, dia, mes, año] = fechaRespuesta;
-                    const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
-                    await db.updateReserva(from, { fecha: fechaISO });
-                    console.log(`💾 Fecha guardada en DB: ${fechaISO}`);
-                }
-            }
-
-            // 5. Detectar y guardar HORA
-            const horaMatch = msg.text.body.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm|p\.m\.|a\.m\.)?/i);
-            if (horaMatch && (textoLower.includes('tarde') || textoLower.includes('noche') ||
-                textoLower.includes('am') || textoLower.includes('pm') || /\d{1,2}:\d{2}/.test(msg.text.body))) {
-                let hora = parseInt(horaMatch[1]);
-                const minutos = horaMatch[2] || '00';
-                const periodo = horaMatch[3] ? horaMatch[3].toLowerCase() : '';
-
-                // Convertir a formato 24h si es PM
-                if (periodo.includes('pm') && hora < 12) hora += 12;
-                if (periodo.includes('am') && hora === 12) hora = 0;
-
-                const horaFormato = `${hora.toString().padStart(2, '0')}:${minutos}:00`;
-                await db.updateReserva(from, { hora: horaFormato });
-                console.log(`💾 Hora guardada en DB: ${horaFormato}`);
-            }
+            // � Procesar y guardar datos del mensaje de texto
+            await procesarYGuardarDatosConversacion(respuestaFaraon, msg.text.body, from);
         }
 
         sesionesActivas[from] = await chat.getHistory(); // Guardar memoria
@@ -1533,6 +1597,14 @@ const PORT = process.env.PORT || 10000;
 // Verificar conexión a base de datos e iniciar servidor
 db.testConnection().then(connected => {
     if (connected) {
+        console.log('═'.repeat(80));
+        console.log('🔥 VERSIÓN DEL CÓDIGO: 2026-01-23 - FIXES DE PERSISTENCIA IMPLEMENTADOS ✅');
+        console.log('   - Validación estricta de datos antes de generar ticket');
+        console.log('   - Función compartida para extracción de datos (voz + texto)');
+        console.log('   - Fix PM hora conversion');
+        console.log('   - Logs detallados en generación de ticket');
+        console.log('═'.repeat(80));
+
         app.listen(PORT, () => console.log(`🌮 Bot Las Margaritas listo en puerto ${PORT}.`));
 
         // 🛡️ SAFETY: Periodic cleanup of stuck locks (every 10 seconds)
