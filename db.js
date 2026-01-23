@@ -77,7 +77,7 @@ async function updateReserva(wa_id, data) {
         // Asegurar que existe una reserva EN_PROCESO primero
         await createOrGetReserva(wa_id);
 
-        const allowedFields = ['nombre', 'fecha', 'hora', 'personas', 'tipo', 'estado_pago', 'ultimo_paso'];
+        const allowedFields = ['nombre', 'fecha', 'hora', 'personas', 'tipo_reserva', 'estado_pago', 'ultimo_paso'];
         const updates = [];
         const values = [];
         let paramIndex = 1;
