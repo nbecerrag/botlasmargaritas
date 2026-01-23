@@ -1045,17 +1045,16 @@ async function procesarYGuardarDatosConversacion(respuestaGemini, mensajeUsuario
     }
 
     // 4. Detectar y guardar FECHA
-    const fechaMatch = mensajeUsuario.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-    if (fechaMatch || mensajeLower.includes('mañana') || mensajeLower.includes('hoy') ||
-        mensajeLower.includes('viernes') || mensajeLower.includes('sábado') || mensajeLower.includes('domingo')) {
-        // Esperar a que Gemini calcule la fecha exacta y la incluya en la respuesta
-        const fechaRespuesta = respuestaGemini.match(/(\d{1,2})[\/](\d{1,2})[\/](\d{4})/);
-        if (fechaRespuesta) {
-            const [_, dia, mes, año] = fechaRespuesta;
-            const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
-            await db.updateReserva(waId, { fecha: fechaISO });
-            console.log(`💾 Fecha guardada en DB: ${fechaISO}`);
-        }
+    // SIEMPRE buscar fecha en respuesta de Gemini (no depender de palabras clave)
+    const fechaRespuesta = respuestaGemini.match(/(\d{1,2})[/](\d{1,2})[/](\d{4})/);
+    if (fechaRespuesta) {
+        const [_, dia, mes, año] = fechaRespuesta;
+        const fechaISO = `${año}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}`;
+        await db.updateReserva(waId, { fecha: fechaISO });
+        console.log(`💾 Fecha guardada en DB: ${fechaISO} (de Gemini: "${fechaRespuesta[0]}"`);
+    } else if (mensajeLower.includes('mañana') || mensajeLower.includes('febrero') || mensajeLower.includes('viernes')) {
+        console.warn(`⚠️ Usuario mencionó fecha pero Gemini NO respondió con dd/mm/yyyy`);
+        console.warn(`   Gemini dijo: "${respuestaGemini.substring(0, 100)}..."`);
     }
 
     // 5. Detectar y guardar HORA (con conversión correcta de PM)
